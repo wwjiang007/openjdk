@@ -193,6 +193,9 @@ public class WhiteBox {
     return parseCommandLine0(commandline, delim, args);
   }
 
+  public native int g1ActiveMemoryNodeCount();
+  public native int[] g1MemoryNodeIds();
+
   // Parallel GC
   public native long psVirtualSpaceAlignment();
   public native long psHeapGenerationAlignment();
@@ -384,7 +387,6 @@ public class WhiteBox {
   public native void freeMetaspace(ClassLoader classLoader, long addr, long size);
   public native long incMetaspaceCapacityUntilGC(long increment);
   public native long metaspaceCapacityUntilGC();
-  public native boolean metaspaceShouldConcurrentCollect();
   public native long metaspaceReserveAlignment();
 
   // Don't use these methods directly
@@ -511,6 +513,7 @@ public class WhiteBox {
 
   // Safepoint Checking
   public native void assertMatchingSafepointCalls(boolean mutexSafepointValue, boolean attemptedNoSafepointValue);
+  public native void assertSpecialLock(boolean allowVMBlock, boolean safepointCheck);
 
   // Sharing & archiving
   public native String  getDefaultArchivePath();

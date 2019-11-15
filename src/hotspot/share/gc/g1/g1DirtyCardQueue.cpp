@@ -37,6 +37,7 @@
 #include "runtime/atomic.hpp"
 #include "runtime/flags/flagSetting.hpp"
 #include "runtime/mutexLocker.hpp"
+#include "runtime/os.hpp"
 #include "runtime/safepoint.hpp"
 #include "runtime/thread.inline.hpp"
 #include "runtime/threadSMR.hpp"
@@ -62,9 +63,13 @@ void G1DirtyCardQueue::handle_completed_buffer() {
   }
 }
 
-G1DirtyCardQueueSet::G1DirtyCardQueueSet() :
-  PtrQueueSet(),
-  _cbl_mon(NULL),
+// Assumed to be zero by concurrent threads.
+static uint par_ids_start() { return 0; }
+
+G1DirtyCardQueueSet::G1DirtyCardQueueSet(Monitor* cbl_mon,
+                                         BufferNode::Allocator* allocator) :
+  PtrQueueSet(allocator),
+  _cbl_mon(cbl_mon),
   _completed_buffers_head(NULL),
   _completed_buffers_tail(NULL),
   _num_cards(0),
@@ -72,15 +77,16 @@ G1DirtyCardQueueSet::G1DirtyCardQueueSet() :
   _process_completed_buffers(false),
   _max_cards(MaxCardsUnlimited),
   _max_cards_padding(0),
-  _free_ids(0, num_par_ids()),
-  _processed_buffers_mut(0),
-  _processed_buffers_rs_thread(0)
+  _free_ids(par_ids_start(), num_par_ids()),
+  _mutator_refined_cards_counters(NEW_C_HEAP_ARRAY(size_t, num_par_ids(), mtGC))
 {
+  ::memset(_mutator_refined_cards_counters, 0, num_par_ids() * sizeof(size_t));
   _all_active = true;
 }
 
 G1DirtyCardQueueSet::~G1DirtyCardQueueSet() {
   abandon_completed_buffers();
+  FREE_C_HEAP_ARRAY(size_t, _mutator_refined_cards_counters);
 }
 
 // Determines how many mutator threads can process the buffers in parallel.
@@ -88,11 +94,12 @@ uint G1DirtyCardQueueSet::num_par_ids() {
   return (uint)os::initial_active_processor_count();
 }
 
-void G1DirtyCardQueueSet::initialize(Monitor* cbl_mon,
-                                     BufferNode::Allocator* allocator) {
-  PtrQueueSet::initialize(allocator);
-  assert(_cbl_mon == NULL, "Init order issue?");
-  _cbl_mon = cbl_mon;
+size_t G1DirtyCardQueueSet::total_mutator_refined_cards() const {
+  size_t sum = 0;
+  for (uint i = 0; i < num_par_ids(); ++i) {
+    sum += _mutator_refined_cards_counters[i];
+  }
+  return sum;
 }
 
 void G1DirtyCardQueueSet::handle_zero_index_for_thread(Thread* t) {
@@ -219,7 +226,9 @@ G1BufferNodeList G1DirtyCardQueueSet::take_all_completed_buffers() {
   return result;
 }
 
-bool G1DirtyCardQueueSet::refine_buffer(BufferNode* node, uint worker_id) {
+bool G1DirtyCardQueueSet::refine_buffer(BufferNode* node,
+                                        uint worker_id,
+                                        size_t* total_refined_cards) {
   G1RemSet* rem_set = G1CollectedHeap::heap()->rem_set();
   size_t size = buffer_size();
   void** buffer = BufferNode::make_buffer_from_node(node);
@@ -229,6 +238,7 @@ bool G1DirtyCardQueueSet::refine_buffer(BufferNode* node, uint worker_id) {
     CardTable::CardValue* cp = static_cast<CardTable::CardValue*>(buffer[i]);
     rem_set->refine_card_concurrently(cp, worker_id);
   }
+  *total_refined_cards += (i - node->index());
   node->set_index(i);
   return i == size;
 }
@@ -266,25 +276,27 @@ bool G1DirtyCardQueueSet::process_or_enqueue_completed_buffer(BufferNode* node) 
 
 bool G1DirtyCardQueueSet::mut_process_buffer(BufferNode* node) {
   uint worker_id = _free_ids.claim_par_id(); // temporarily claim an id
-  bool result = refine_buffer(node, worker_id);
+  uint counter_index = worker_id - par_ids_start();
+  size_t* counter = &_mutator_refined_cards_counters[counter_index];
+  bool result = refine_buffer(node, worker_id, counter);
   _free_ids.release_par_id(worker_id); // release the id
 
   if (result) {
     assert_fully_consumed(node, buffer_size());
-    Atomic::inc(&_processed_buffers_mut);
   }
   return result;
 }
 
-bool G1DirtyCardQueueSet::refine_completed_buffer_concurrently(uint worker_id, size_t stop_at) {
+bool G1DirtyCardQueueSet::refine_completed_buffer_concurrently(uint worker_id,
+                                                               size_t stop_at,
+                                                               size_t* total_refined_cards) {
   BufferNode* node = get_completed_buffer(stop_at);
   if (node == NULL) {
     return false;
-  } else if (refine_buffer(node, worker_id)) {
+  } else if (refine_buffer(node, worker_id, total_refined_cards)) {
     assert_fully_consumed(node, buffer_size());
     // Done with fully processed buffer.
     deallocate_buffer(node);
-    Atomic::inc(&_processed_buffers_rs_thread);
     return true;
   } else {
     // Return partially processed buffer to the queue.

@@ -1205,7 +1205,7 @@ void ObjectMonitor::wait(jlong millis, bool interruptible, TRAPS) {
   EventJavaMonitorWait event;
 
   // check for a pending interrupt
-  if (interruptible && Thread::is_interrupted(Self, true) && !HAS_PENDING_EXCEPTION) {
+  if (interruptible && jt->is_interrupted(true) && !HAS_PENDING_EXCEPTION) {
     // post monitor waited event.  Note that this is past-tense, we are done waiting.
     if (JvmtiExport::should_post_monitor_waited()) {
       // Note: 'false' parameter is passed here because the
@@ -1267,6 +1267,10 @@ void ObjectMonitor::wait(jlong millis, bool interruptible, TRAPS) {
 
   int ret = OS_OK;
   int WasNotified = 0;
+
+  // Need to check interrupt state whilst still _thread_in_vm
+  bool interrupted = interruptible && jt->is_interrupted(false);
+
   { // State transition wrappers
     OSThread* osthread = Self->osthread();
     OSThreadWaitState osts(osthread, true);
@@ -1275,7 +1279,7 @@ void ObjectMonitor::wait(jlong millis, bool interruptible, TRAPS) {
       // Thread is in thread_blocked state and oop access is unsafe.
       jt->set_suspend_equivalent();
 
-      if (interruptible && (Thread::is_interrupted(THREAD, false) || HAS_PENDING_EXCEPTION)) {
+      if (interrupted || HAS_PENDING_EXCEPTION) {
         // Intentionally empty
       } else if (node._notified == 0) {
         if (millis <= 0) {
@@ -1401,7 +1405,7 @@ void ObjectMonitor::wait(jlong millis, bool interruptible, TRAPS) {
   if (!WasNotified) {
     // no, it could be timeout or Thread.interrupt() or both
     // check for interrupt event, otherwise it is timeout
-    if (interruptible && Thread::is_interrupted(Self, true) && !HAS_PENDING_EXCEPTION) {
+    if (interruptible && jt->is_interrupted(true) && !HAS_PENDING_EXCEPTION) {
       THROW(vmSymbols::java_lang_InterruptedException());
     }
   }

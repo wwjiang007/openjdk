@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -71,6 +71,18 @@ void Jfr::on_thread_exit(Thread* t) {
   JfrThreadLocal::on_exit(t);
 }
 
+void Jfr::exclude_thread(Thread* t) {
+  JfrThreadLocal::exclude(t);
+}
+
+void Jfr::include_thread(Thread* t) {
+  JfrThreadLocal::include(t);
+}
+
+bool Jfr::is_excluded(Thread* t) {
+  return t != NULL && t->jfr_thread_local()->is_excluded();
+}
+
 void Jfr::on_java_thread_dismantle(JavaThread* jt) {
   if (JfrRecorder::is_recording()) {
     JfrCheckpointManager::write_thread_checkpoint(jt);
@@ -84,7 +96,9 @@ void Jfr::on_vm_shutdown(bool exception_handler) {
 }
 
 void Jfr::weak_oops_do(BoolObjectClosure* is_alive, OopClosure* f) {
-  LeakProfiler::oops_do(is_alive, f);
+  if (LeakProfiler::is_running()) {
+    LeakProfiler::oops_do(is_alive, f);
+  }
 }
 
 bool Jfr::on_flight_recorder_option(const JavaVMOption** option, char* delimiter) {

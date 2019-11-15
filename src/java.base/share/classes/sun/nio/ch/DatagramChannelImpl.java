@@ -27,6 +27,10 @@ package sun.nio.ch;
 
 import java.io.FileDescriptor;
 import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.lang.ref.Cleaner.Cleanable;
 import java.net.DatagramSocket;
 import java.net.Inet4Address;
 import java.net.Inet6Address;
@@ -37,6 +41,7 @@ import java.net.PortUnreachableException;
 import java.net.ProtocolFamily;
 import java.net.SocketAddress;
 import java.net.SocketOption;
+import java.net.SocketTimeoutException;
 import java.net.StandardProtocolFamily;
 import java.net.StandardSocketOptions;
 import java.nio.ByteBuffer;
@@ -45,6 +50,7 @@ import java.nio.channels.AlreadyConnectedException;
 import java.nio.channels.AsynchronousCloseException;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.DatagramChannel;
+import java.nio.channels.IllegalBlockingModeException;
 import java.nio.channels.MembershipKey;
 import java.nio.channels.NotYetConnectedException;
 import java.nio.channels.SelectionKey;
@@ -55,6 +61,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 
+import jdk.internal.ref.CleanerFactory;
 import sun.net.ResourceManager;
 import sun.net.ext.ExtendedSocketOptions;
 import sun.net.util.IPAddressUtil;
@@ -68,7 +75,7 @@ class DatagramChannelImpl
     implements SelChImpl
 {
     // Used to make native read and write calls
-    private static NativeDispatcher nd = new DatagramDispatcher();
+    private static final NativeDispatcher nd = new DatagramDispatcher();
 
     // The protocol family of the socket
     private final ProtocolFamily family;
@@ -76,6 +83,7 @@ class DatagramChannelImpl
     // Our file descriptor
     private final FileDescriptor fd;
     private final int fdVal;
+    private final Cleanable cleaner;
 
     // Cached InetAddress and port for unconnected DatagramChannels
     // used by receive0
@@ -109,8 +117,17 @@ class DatagramChannelImpl
     private InetSocketAddress localAddress;
     private InetSocketAddress remoteAddress;
 
-    // Our socket adaptor, if any
-    private DatagramSocket socket;
+    // Socket adaptor, created lazily
+    private static final VarHandle SOCKET;
+    static {
+        try {
+            MethodHandles.Lookup l = MethodHandles.lookup();
+            SOCKET = l.findVarHandle(DatagramChannelImpl.class, "socket", DatagramSocket.class);
+        } catch (Exception e) {
+            throw new InternalError(e);
+        }
+    }
+    private volatile DatagramSocket socket;
 
     // Multicast support
     private MembershipRegistry registry;
@@ -138,6 +155,7 @@ class DatagramChannelImpl
             ResourceManager.afterUdpClose();
             throw ioe;
         }
+        this.cleaner = CleanerFactory.cleaner().register(this, closerFor(fd));
     }
 
     public DatagramChannelImpl(SelectorProvider sp, ProtocolFamily family)
@@ -164,6 +182,7 @@ class DatagramChannelImpl
             ResourceManager.afterUdpClose();
             throw ioe;
         }
+        this.cleaner = CleanerFactory.cleaner().register(this, closerFor(fd));
     }
 
     public DatagramChannelImpl(SelectorProvider sp, FileDescriptor fd)
@@ -179,6 +198,7 @@ class DatagramChannelImpl
                 : StandardProtocolFamily.INET;
         this.fd = fd;
         this.fdVal = IOUtil.fdVal(fd);
+        this.cleaner = CleanerFactory.cleaner().register(this, closerFor(fd));
         synchronized (stateLock) {
             this.localAddress = Net.localAddress(fd);
         }
@@ -192,11 +212,14 @@ class DatagramChannelImpl
 
     @Override
     public DatagramSocket socket() {
-        synchronized (stateLock) {
-            if (socket == null)
-                socket = DatagramSocketAdaptor.create(this);
-            return socket;
+        DatagramSocket socket = this.socket;
+        if (socket == null) {
+            socket = DatagramSocketAdaptor.create(this);
+            if (!SOCKET.compareAndSet(this, null, socket)) {
+                socket = this.socket;
+            }
         }
+        return socket;
     }
 
     @Override
@@ -216,6 +239,40 @@ class DatagramChannelImpl
         }
     }
 
+    /**
+     * Returns the protocol family to specify to set/getSocketOption for the
+     * given socket option.
+     */
+    private ProtocolFamily familyFor(SocketOption<?> name) {
+        assert Thread.holdsLock(stateLock);
+
+        // unspecified (most options)
+        if (SocketOptionRegistry.findOption(name, Net.UNSPEC) != null)
+            return Net.UNSPEC;
+
+        // IPv4 socket
+        if (family == StandardProtocolFamily.INET)
+            return StandardProtocolFamily.INET;
+
+        // IPv6 socket that is unbound
+        if (localAddress == null)
+            return StandardProtocolFamily.INET6;
+
+        // IPv6 socket bound to wildcard or IPv6 address
+        InetAddress address = localAddress.getAddress();
+        if (address.isAnyLocalAddress() || (address instanceof Inet6Address))
+            return StandardProtocolFamily.INET6;
+
+        // IPv6 socket bound to IPv4 address
+        if (Net.canUseIPv6OptionsWithIPv4LocalAddress()) {
+            // IPV6_XXX options can be used
+            return StandardProtocolFamily.INET6;
+        } else {
+            // IPV6_XXX options cannot be used
+            return StandardProtocolFamily.INET;
+        }
+    }
+
     @Override
     public <T> DatagramChannel setOption(SocketOption<T> name, T value)
         throws IOException
@@ -229,14 +286,7 @@ class DatagramChannelImpl
         synchronized (stateLock) {
             ensureOpen();
 
-            if (name == StandardSocketOptions.IP_TOS ||
-                name == StandardSocketOptions.IP_MULTICAST_TTL ||
-                name == StandardSocketOptions.IP_MULTICAST_LOOP)
-            {
-                // options are protocol dependent
-                Net.setSocketOption(fd, family, name, value);
-                return this;
-            }
+            ProtocolFamily family = familyFor(name);
 
             if (name == StandardSocketOptions.IP_MULTICAST_IF) {
                 NetworkInterface interf = (NetworkInterface)value;
@@ -262,7 +312,7 @@ class DatagramChannelImpl
             }
 
             // remaining options don't need any special handling
-            Net.setSocketOption(fd, Net.UNSPEC, name, value);
+            Net.setSocketOption(fd, family, name, value);
             return this;
         }
     }
@@ -279,12 +329,7 @@ class DatagramChannelImpl
         synchronized (stateLock) {
             ensureOpen();
 
-            if (name == StandardSocketOptions.IP_TOS ||
-                name == StandardSocketOptions.IP_MULTICAST_TTL ||
-                name == StandardSocketOptions.IP_MULTICAST_LOOP)
-            {
-                return (T) Net.getSocketOption(fd, family, name);
-            }
+            ProtocolFamily family = familyFor(name);
 
             if (name == StandardSocketOptions.IP_MULTICAST_IF) {
                 if (family == StandardProtocolFamily.INET) {
@@ -310,11 +355,11 @@ class DatagramChannelImpl
             }
 
             if (name == StandardSocketOptions.SO_REUSEADDR && reuseAddressEmulated) {
-                return (T)Boolean.valueOf(isReuseAddress);
+                return (T) Boolean.valueOf(isReuseAddress);
             }
 
             // no special handling
-            return (T) Net.getSocketOption(fd, Net.UNSPEC, name);
+            return (T) Net.getSocketOption(fd, family, name);
         }
     }
 
@@ -401,62 +446,35 @@ class DatagramChannelImpl
     public SocketAddress receive(ByteBuffer dst) throws IOException {
         if (dst.isReadOnly())
             throw new IllegalArgumentException("Read-only buffer");
-
         readLock.lock();
         try {
             boolean blocking = isBlocking();
+            boolean completed = false;
             int n = 0;
-            ByteBuffer bb = null;
             try {
                 SocketAddress remote = beginRead(blocking, false);
                 boolean connected = (remote != null);
                 SecurityManager sm = System.getSecurityManager();
+
                 if (connected || (sm == null)) {
                     // connected or no security manager
-                    n = receive(fd, dst, connected);
+                    n = receive(dst, connected);
                     if (blocking) {
                         while (IOStatus.okayToRetry(n) && isOpen()) {
                             park(Net.POLLIN);
-                            n = receive(fd, dst, connected);
+                            n = receive(dst, connected);
                         }
-                    } else if (n == IOStatus.UNAVAILABLE) {
-                        return null;
                     }
                 } else {
-                    // Cannot receive into user's buffer when running with a
-                    // security manager and not connected
-                    bb = Util.getTemporaryDirectBuffer(dst.remaining());
-                    for (;;) {
-                        n = receive(fd, bb, connected);
-                        if (blocking) {
-                            while (IOStatus.okayToRetry(n) && isOpen()) {
-                                park(Net.POLLIN);
-                                n = receive(fd, bb, connected);
-                            }
-                        } else if (n == IOStatus.UNAVAILABLE) {
-                            return null;
-                        }
-                        InetSocketAddress isa = (InetSocketAddress)sender;
-                        try {
-                            sm.checkAccept(isa.getAddress().getHostAddress(),
-                                           isa.getPort());
-                        } catch (SecurityException se) {
-                            // Ignore packet
-                            bb.clear();
-                            n = 0;
-                            continue;
-                        }
-                        bb.flip();
-                        dst.put(bb);
-                        break;
-                    }
+                    // security manager and unconnected
+                    n = untrustedReceive(dst);
                 }
-                assert sender != null;
+                if (n == IOStatus.UNAVAILABLE)
+                    return null;
+                completed = (n > 0) || (n == 0 && isOpen());
                 return sender;
             } finally {
-                if (bb != null)
-                    Util.releaseTemporaryDirectBuffer(bb);
-                endRead(blocking, n > 0);
+                endRead(blocking, completed);
                 assert IOStatus.check(n);
             }
         } finally {
@@ -464,15 +482,164 @@ class DatagramChannelImpl
         }
     }
 
-    private int receive(FileDescriptor fd, ByteBuffer dst, boolean connected)
+    /**
+     * Receives a datagram into an untrusted buffer. When there is a security
+     * manager set, and the socket is not connected, datagrams have to be received
+     * into a buffer that is not accessible to the user. The datagram is copied
+     * into the user's buffer when the sender address is accepted by the security
+     * manager.
+     *
+     * @return the size of the datagram or IOStatus.UNAVAILABLE
+     */
+    private int untrustedReceive(ByteBuffer dst) throws IOException {
+        SecurityManager sm = System.getSecurityManager();
+        assert readLock.isHeldByCurrentThread()
+                && sm != null && remoteAddress == null;
+
+        ByteBuffer bb = Util.getTemporaryDirectBuffer(dst.remaining());
+        try {
+            boolean blocking = isBlocking();
+            for (;;) {
+                int n = receive(bb, false);
+                if (blocking) {
+                    while (IOStatus.okayToRetry(n) && isOpen()) {
+                        park(Net.POLLIN);
+                        n = receive(bb, false);
+                    }
+                } else if (n == IOStatus.UNAVAILABLE) {
+                    return n;
+                }
+                InetSocketAddress isa = (InetSocketAddress) sender;
+                try {
+                    sm.checkAccept(isa.getAddress().getHostAddress(), isa.getPort());
+                    bb.flip();
+                    dst.put(bb);
+                    return n;
+                } catch (SecurityException se) {
+                    // ignore datagram
+                    bb.clear();
+                }
+            }
+        } finally {
+            Util.releaseTemporaryDirectBuffer(bb);
+        }
+    }
+
+    /**
+     * Receives a datagram into the given buffer.
+     *
+     * @apiNote This method is for use by the socket adaptor. The buffer is
+     * assumed to be trusted, meaning it is not accessible to user code.
+     *
+     * @throws IllegalBlockingModeException if the channel is non-blocking
+     * @throws SocketTimeoutException if the timeout elapses
+     */
+    SocketAddress blockingReceive(ByteBuffer dst, long nanos) throws IOException {
+        readLock.lock();
+        try {
+            ensureOpen();
+            if (!isBlocking())
+                throw new IllegalBlockingModeException();
+            SecurityManager sm = System.getSecurityManager();
+            boolean connected = isConnected();
+            SocketAddress sender;
+            do {
+                if (nanos > 0) {
+                    sender = trustedBlockingReceive(dst, nanos);
+                } else {
+                    sender = trustedBlockingReceive(dst);
+                }
+                // check sender when security manager set and not connected
+                if (sm != null && !connected) {
+                    InetSocketAddress isa = (InetSocketAddress) sender;
+                    try {
+                        sm.checkAccept(isa.getAddress().getHostAddress(), isa.getPort());
+                    } catch (SecurityException e) {
+                        sender = null;
+                    }
+                }
+            } while (sender == null);
+            return sender;
+        } finally {
+            readLock.unlock();
+        }
+    }
+
+    /**
+     * Receives a datagram into given buffer. This method is used to support
+     * the socket adaptor. The buffer is assumed to be trusted.
+     * @throws SocketTimeoutException if the timeout elapses
+     */
+    private SocketAddress trustedBlockingReceive(ByteBuffer dst)
         throws IOException
     {
+        assert readLock.isHeldByCurrentThread() && isBlocking();
+        boolean completed = false;
+        int n = 0;
+        try {
+            SocketAddress remote = beginRead(true, false);
+            boolean connected = (remote != null);
+            n = receive(dst, connected);
+            while (n == IOStatus.UNAVAILABLE && isOpen()) {
+                park(Net.POLLIN);
+                n = receive(dst, connected);
+            }
+            completed = (n > 0) || (n == 0 && isOpen());
+            return sender;
+        } finally {
+            endRead(true, completed);
+            assert IOStatus.check(n);
+        }
+    }
+
+    /**
+     * Receives a datagram into given buffer with a timeout. This method is
+     * used to support the socket adaptor. The buffer is assumed to be trusted.
+     * @throws SocketTimeoutException if the timeout elapses
+     */
+    private SocketAddress trustedBlockingReceive(ByteBuffer dst, long nanos)
+        throws IOException
+    {
+        assert readLock.isHeldByCurrentThread() && isBlocking();
+        boolean completed = false;
+        int n = 0;
+        try {
+            SocketAddress remote = beginRead(true, false);
+            boolean connected = (remote != null);
+
+            // change socket to non-blocking
+            lockedConfigureBlocking(false);
+            try {
+                long startNanos = System.nanoTime();
+                n = receive(dst, connected);
+                while (n == IOStatus.UNAVAILABLE && isOpen()) {
+                    long remainingNanos = nanos - (System.nanoTime() - startNanos);
+                    if (remainingNanos <= 0) {
+                        throw new SocketTimeoutException("Receive timed out");
+                    }
+                    park(Net.POLLIN, remainingNanos);
+                    n = receive(dst, connected);
+                }
+                completed = (n > 0) || (n == 0 && isOpen());
+                return sender;
+            } finally {
+                // restore socket to blocking mode (if channel is open)
+                tryLockedConfigureBlocking(true);
+            }
+
+        } finally {
+            endRead(true, completed);
+            assert IOStatus.check(n);
+        }
+    }
+
+    private int receive(ByteBuffer dst, boolean connected) throws IOException {
         int pos = dst.position();
         int lim = dst.limit();
         assert (pos <= lim);
         int rem = (pos <= lim ? lim - pos : 0);
         if (dst instanceof DirectBuffer && rem > 0)
-            return receiveIntoNativeBuffer(fd, dst, rem, pos, connected);
+            return receiveIntoNativeBuffer(dst, rem, pos, connected);
 
         // Substitute a native buffer. If the supplied buffer is empty
         // we must instead use a nonempty buffer, otherwise the call
@@ -480,7 +647,7 @@ class DatagramChannelImpl
         int newSize = Math.max(rem, 1);
         ByteBuffer bb = Util.getTemporaryDirectBuffer(newSize);
         try {
-            int n = receiveIntoNativeBuffer(fd, bb, newSize, 0, connected);
+            int n = receiveIntoNativeBuffer(bb, newSize, 0, connected);
             bb.flip();
             if (n > 0 && rem > 0)
                 dst.put(bb);
@@ -490,8 +657,8 @@ class DatagramChannelImpl
         }
     }
 
-    private int receiveIntoNativeBuffer(FileDescriptor fd, ByteBuffer bb,
-                                        int rem, int pos, boolean connected)
+    private int receiveIntoNativeBuffer(ByteBuffer bb, int rem, int pos,
+                                        boolean connected)
         throws IOException
     {
         int n = receive0(fd, ((DirectBuffer)bb).address() + pos, rem, connected);
@@ -551,6 +718,25 @@ class DatagramChannelImpl
                 assert IOStatus.check(n);
             }
             return IOStatus.normalize(n);
+        } finally {
+            writeLock.unlock();
+        }
+    }
+
+    /**
+     * Sends a datagram from the bytes in given buffer.
+     *
+     * @apiNote This method is for use by the socket adaptor.
+     *
+     * @throws IllegalBlockingModeException if the channel is non-blocking
+     */
+    void blockingSend(ByteBuffer src, SocketAddress target) throws IOException {
+        writeLock.lock();
+        try {
+            ensureOpen();
+            if (!isBlocking())
+                throw new IllegalBlockingModeException();
+            send(src, target);
         } finally {
             writeLock.unlock();
         }
@@ -778,15 +964,42 @@ class DatagramChannelImpl
         try {
             writeLock.lock();
             try {
-                synchronized (stateLock) {
-                    ensureOpen();
-                    IOUtil.configureBlocking(fd, block);
-                }
+                lockedConfigureBlocking(block);
             } finally {
                 writeLock.unlock();
             }
         } finally {
             readLock.unlock();
+        }
+    }
+
+    /**
+     * Adjusts the blocking mode. readLock or writeLock must already be held.
+     */
+    private void lockedConfigureBlocking(boolean block) throws IOException {
+        assert readLock.isHeldByCurrentThread() || writeLock.isHeldByCurrentThread();
+        synchronized (stateLock) {
+            ensureOpen();
+            IOUtil.configureBlocking(fd, block);
+        }
+    }
+
+    /**
+     * Adjusts the blocking mode if the channel is open. readLock or writeLock
+     * must already be held.
+     *
+     * @return {@code true} if the blocking mode was adjusted, {@code false} if
+     *         the blocking mode was not adjusted because the channel is closed
+     */
+    private boolean tryLockedConfigureBlocking(boolean block) throws IOException {
+        assert readLock.isHeldByCurrentThread() || writeLock.isHeldByCurrentThread();
+        synchronized (stateLock) {
+            if (isOpen()) {
+                IOUtil.configureBlocking(fd, block);
+                return true;
+            } else {
+                return false;
+            }
         }
     }
 
@@ -854,6 +1067,16 @@ class DatagramChannelImpl
 
     @Override
     public DatagramChannel connect(SocketAddress sa) throws IOException {
+        return connect(sa, true);
+    }
+
+    /**
+     * Connects the channel's socket.
+     *
+     * @param sa the remote address to which this channel is to be connected
+     * @param check true to check if the channel is already connected.
+     */
+    DatagramChannel connect(SocketAddress sa, boolean check) throws IOException {
         InetSocketAddress isa = Net.checkAddress(sa, family);
         SecurityManager sm = System.getSecurityManager();
         if (sm != null) {
@@ -872,8 +1095,13 @@ class DatagramChannelImpl
             try {
                 synchronized (stateLock) {
                     ensureOpen();
-                    if (state == ST_CONNECTED)
+                    if (check && state == ST_CONNECTED)
                         throw new AlreadyConnectedException();
+
+                    // ensure that the socket is bound
+                    if (localAddress == null) {
+                        bindInternal(null);
+                    }
 
                     int n = Net.connect(family,
                                         fd,
@@ -896,7 +1124,7 @@ class DatagramChannelImpl
                     }
                     try {
                         ByteBuffer buf = ByteBuffer.allocate(100);
-                        while (receive(fd, buf, false) > 0) {
+                        while (receive(buf, false) >= 0) {
                             buf.clear();
                         }
                     } finally {
@@ -932,8 +1160,21 @@ class DatagramChannelImpl
                     remoteAddress = null;
                     state = ST_UNCONNECTED;
 
-                    // refresh local address
-                    localAddress = Net.localAddress(fd);
+                    // check whether rebind is needed
+                    InetSocketAddress isa = Net.localAddress(fd);
+                    if (isa.getPort() == 0) {
+                        // On Linux, if bound to ephemeral port,
+                        // disconnect does not preserve that port.
+                        // In this case, try to rebind to the previous port.
+                        int port = localAddress.getPort();
+                        localAddress = isa; // in case Net.bind fails
+                        Net.bind(family, fd, isa.getAddress(), port);
+                        isa = Net.localAddress(fd); // refresh address
+                        assert isa.getPort() == port;
+                    }
+
+                    // refresh localAddress
+                    localAddress = isa;
                 }
             } finally {
                 writeLock.unlock();
@@ -1163,10 +1404,10 @@ class DatagramChannelImpl
         if ((readerThread == 0) && (writerThread == 0) && !isRegistered()) {
             state = ST_CLOSED;
             try {
-                nd.close(fd);
-            } finally {
-                // notify resource manager
-                ResourceManager.afterUdpClose();
+                // close socket
+                cleaner.clean();
+            } catch (UncheckedIOException ioe) {
+                throw ioe.getCause();
             }
             return true;
         } else {
@@ -1265,13 +1506,6 @@ class DatagramChannelImpl
         }
     }
 
-    @SuppressWarnings("deprecation")
-    protected void finalize() throws IOException {
-        // fd is null if constructor threw exception
-        if (fd != null)
-            close();
-    }
-
     /**
      * Translates native poll revent set into a ready operation set
      */
@@ -1314,30 +1548,6 @@ class DatagramChannelImpl
     }
 
     /**
-     * Poll this channel's socket for reading up to the given timeout.
-     * @return {@code true} if the socket is polled
-     */
-    boolean pollRead(long timeout) throws IOException {
-        boolean blocking = isBlocking();
-        assert Thread.holdsLock(blockingLock()) && blocking;
-
-        readLock.lock();
-        try {
-            boolean polled = false;
-            try {
-                beginRead(blocking, false);
-                int events = Net.poll(fd, Net.POLLIN, timeout);
-                polled = (events != 0);
-            } finally {
-                endRead(blocking, polled);
-            }
-            return polled;
-        } finally {
-            readLock.unlock();
-        }
-    }
-
-    /**
      * Translates an interest operation set into a native poll event set
      */
     public int translateInterestOps(int ops) {
@@ -1359,6 +1569,21 @@ class DatagramChannelImpl
         return fdVal;
     }
 
+    /**
+     * Returns an action to close the given file descriptor.
+     */
+    private static Runnable closerFor(FileDescriptor fd) {
+        return () -> {
+            try {
+                nd.close(fd);
+            } catch (IOException ioe) {
+                throw new UncheckedIOException(ioe);
+            } finally {
+                // decrement
+                ResourceManager.afterUdpClose();
+            }
+        };
+    }
 
     // -- Native methods --
 

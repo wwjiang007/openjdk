@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2005, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -1414,7 +1414,7 @@ int ConnectionGraph::add_java_object_edges(JavaObjectNode* jobj, bool populate_w
     }
   }
   _worklist.clear();
-  _in_worklist.Reset();
+  _in_worklist.reset();
   return new_edges;
 }
 
@@ -2113,7 +2113,8 @@ bool ConnectionGraph::is_oop_field(Node* n, int offset, bool* unsafe) {
       }
     }
   }
-  return (bt == T_OBJECT || bt == T_NARROWOOP || bt == T_ARRAY);
+  // Note: T_NARROWOOP is not classed as a real reference type
+  return (is_reference_type(bt) || bt == T_NARROWOOP);
 }
 
 // Returns unique pointed java object or NULL.
@@ -2125,6 +2126,9 @@ JavaObjectNode* ConnectionGraph::unique_java_object(Node *n) {
     return NULL;
   }
   PointsToNode* ptn = ptnode_adr(idx);
+  if (ptn == NULL) {
+    return NULL;
+  }
   if (ptn->is_JavaObject()) {
     return ptn->as_JavaObject();
   }

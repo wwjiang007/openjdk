@@ -104,6 +104,13 @@ const char* CompiledMethod::state() const {
 }
 
 //-----------------------------------------------------------------------------
+void CompiledMethod::mark_for_deoptimization(bool inc_recompile_counts) {
+  MutexLocker ml(CompiledMethod_lock->owned_by_self() ? NULL : CompiledMethod_lock,
+                 Mutex::_no_safepoint_check_flag);
+  _mark_for_deoptimization_status = (inc_recompile_counts ? deoptimize : deoptimize_noupdate);
+}
+
+//-----------------------------------------------------------------------------
 
 ExceptionCache* CompiledMethod::exception_cache_acquire() const {
   return OrderAccess::load_acquire(&_exception_cache);
@@ -348,7 +355,7 @@ void CompiledMethod::preserve_callee_argument_oops(frame fr, const RegisterMap *
   if (method() != NULL && !method()->is_native()) {
     address pc = fr.pc();
     SimpleScopeDesc ssd(this, pc);
-    Bytecode_invoke call(ssd.method(), ssd.bci());
+    Bytecode_invoke call(methodHandle(Thread::current(), ssd.method()), ssd.bci());
     bool has_receiver = call.has_receiver();
     bool has_appendix = call.has_appendix();
     Symbol* signature = call.signature();

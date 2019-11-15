@@ -34,10 +34,13 @@
 #include "interpreter/abstractInterpreter.hpp"
 #include "jvmci/compilerRuntime.hpp"
 #include "jvmci/jvmciRuntime.hpp"
+#include "logging/log.hpp"
 #include "memory/allocation.inline.hpp"
 #include "memory/universe.hpp"
 #include "oops/compressedOops.hpp"
+#include "oops/klass.inline.hpp"
 #include "oops/method.inline.hpp"
+#include "runtime/deoptimization.hpp"
 #include "runtime/handles.inline.hpp"
 #include "runtime/os.hpp"
 #include "runtime/safepointVerifiers.hpp"
@@ -91,7 +94,7 @@ Klass* AOTCodeHeap::lookup_klass(const char* name, int len, const Method* method
   Handle protection_domain(thread, caller->method_holder()->protection_domain());
 
   // Ignore wrapping L and ;
-  if (name[0] == 'L') {
+  if (name[0] == JVM_SIGNATURE_CLASS) {
     assert(len > 2, "small name %s", name);
     name++;
     len -= 2;
@@ -212,12 +215,8 @@ AOTLib::~AOTLib() {
 }
 
 AOTCodeHeap::~AOTCodeHeap() {
-  if (_classes != NULL) {
-    FREE_C_HEAP_ARRAY(AOTClass, _classes);
-  }
-  if (_code_to_aot != NULL) {
-    FREE_C_HEAP_ARRAY(CodeToAMethod, _code_to_aot);
-  }
+  FREE_C_HEAP_ARRAY(AOTClass, _classes);
+  FREE_C_HEAP_ARRAY(CodeToAMethod, _code_to_aot);
 }
 
 AOTLib::AOTLib(void* handle, const char* name, int dso_id) : _valid(true), _dl_handle(handle), _dso_id(dso_id) {
@@ -355,7 +354,10 @@ void AOTCodeHeap::publish_aot(const methodHandle& mh, AOTMethodData* method_data
 #ifdef TIERED
     mh->set_aot_code(aot);
 #endif
-    Method::set_code(mh, aot);
+    {
+      MutexLocker pl(CompiledMethod_lock, Mutex::_no_safepoint_check_flag);
+      Method::set_code(mh, aot);
+    }
     if (PrintAOT || (PrintCompilation && PrintAOT)) {
       PauseNoSafepointVerifier pnsv(&nsv); // aot code is registered already
       aot->print_on(tty, NULL);
@@ -401,9 +403,6 @@ void AOTCodeHeap::register_stubs() {
     int len = Bytes::get_Java_u2((address)stub_name);
     stub_name += 2;
     char* full_name = NEW_C_HEAP_ARRAY(char, len+5, mtCode);
-    if (full_name == NULL) { // No memory?
-      break;
-    }
     memcpy(full_name, "AOT ", 4);
     memcpy(full_name+4, stub_name, len);
     full_name[len+4] = 0;
@@ -452,7 +451,6 @@ void AOTCodeHeap::link_graal_runtime_symbols()  {
     SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_jvmci_runtime_write_barrier_post", address, JVMCIRuntime::write_barrier_post);
 #endif
     SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_jvmci_runtime_identity_hash_code", address, JVMCIRuntime::identity_hash_code);
-    SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_jvmci_runtime_thread_is_interrupted", address, JVMCIRuntime::thread_is_interrupted);
     SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_jvmci_runtime_exception_handler_for_pc", address, JVMCIRuntime::exception_handler_for_pc);
     SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_jvmci_runtime_test_deoptimize_call_int", address, JVMCIRuntime::test_deoptimize_call_int);
     SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_jvmci_runtime_throw_and_post_jvmti_exception", address, JVMCIRuntime::throw_and_post_jvmti_exception);
@@ -735,8 +733,7 @@ void AOTCodeHeap::sweep_dependent_methods(int* indexes, int methods_cnt) {
     }
   }
   if (marked > 0) {
-    VM_Deoptimize op;
-    VMThread::execute(&op);
+    Deoptimization::deoptimize_all_marked();
   }
 }
 

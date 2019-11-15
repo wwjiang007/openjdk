@@ -62,8 +62,6 @@ G1GCPhaseTimes::G1GCPhaseTimes(STWGCTimer* gc_timer, uint max_gc_threads) :
   _gc_par_phases[JVMTIRoots] = new WorkerDataArray<double>(max_gc_threads, "JVMTI Roots (ms):");
   AOT_ONLY(_gc_par_phases[AOTCodeRoots] = new WorkerDataArray<double>(max_gc_threads, "AOT Root Scan (ms):");)
   _gc_par_phases[CMRefRoots] = new WorkerDataArray<double>(max_gc_threads, "CM RefProcessor Roots (ms):");
-  _gc_par_phases[WaitForStrongCLD] = new WorkerDataArray<double>(max_gc_threads, "Wait For Strong CLD (ms):");
-  _gc_par_phases[WeakCLDRoots] = new WorkerDataArray<double>(max_gc_threads, "Weak CLD Roots (ms):");
 
   _gc_par_phases[MergeER] = new WorkerDataArray<double>(max_gc_threads, "Eager Reclaim (ms):");
 
@@ -166,7 +164,7 @@ G1GCPhaseTimes::G1GCPhaseTimes(STWGCTimer* gc_timer, uint max_gc_threads) :
 
 void G1GCPhaseTimes::reset() {
   _cur_collection_initial_evac_time_ms = 0.0;
-  _cur_optional_evac_ms = 0.0;
+  _cur_optional_evac_time_ms = 0.0;
   _cur_collection_code_root_fixup_time_ms = 0.0;
   _cur_strong_code_root_purge_time_ms = 0.0;
   _cur_merge_heap_roots_time_ms = 0.0;
@@ -273,37 +271,37 @@ void G1GCPhaseTimes::note_gc_end() {
 #undef ASSERT_PHASE_UNINITIALIZED
 
 // record the time a phase took in seconds
-void G1GCPhaseTimes::record_time_secs(GCParPhases phase, uint worker_i, double secs) {
-  _gc_par_phases[phase]->set(worker_i, secs);
+void G1GCPhaseTimes::record_time_secs(GCParPhases phase, uint worker_id, double secs) {
+  _gc_par_phases[phase]->set(worker_id, secs);
 }
 
 // add a number of seconds to a phase
-void G1GCPhaseTimes::add_time_secs(GCParPhases phase, uint worker_i, double secs) {
-  _gc_par_phases[phase]->add(worker_i, secs);
+void G1GCPhaseTimes::add_time_secs(GCParPhases phase, uint worker_id, double secs) {
+  _gc_par_phases[phase]->add(worker_id, secs);
 }
 
-void G1GCPhaseTimes::record_or_add_time_secs(GCParPhases phase, uint worker_i, double secs) {
-  if (_gc_par_phases[phase]->get(worker_i) == _gc_par_phases[phase]->uninitialized()) {
-    record_time_secs(phase, worker_i, secs);
+void G1GCPhaseTimes::record_or_add_time_secs(GCParPhases phase, uint worker_id, double secs) {
+  if (_gc_par_phases[phase]->get(worker_id) == _gc_par_phases[phase]->uninitialized()) {
+    record_time_secs(phase, worker_id, secs);
   } else {
-    add_time_secs(phase, worker_i, secs);
+    add_time_secs(phase, worker_id, secs);
   }
 }
 
-double G1GCPhaseTimes::get_time_secs(GCParPhases phase, uint worker_i) {
-  return _gc_par_phases[phase]->get(worker_i);
+double G1GCPhaseTimes::get_time_secs(GCParPhases phase, uint worker_id) {
+  return _gc_par_phases[phase]->get(worker_id);
 }
 
-void G1GCPhaseTimes::record_thread_work_item(GCParPhases phase, uint worker_i, size_t count, uint index) {
-  _gc_par_phases[phase]->set_thread_work_item(worker_i, count, index);
+void G1GCPhaseTimes::record_thread_work_item(GCParPhases phase, uint worker_id, size_t count, uint index) {
+  _gc_par_phases[phase]->set_thread_work_item(worker_id, count, index);
 }
 
-void G1GCPhaseTimes::record_or_add_thread_work_item(GCParPhases phase, uint worker_i, size_t count, uint index) {
-  _gc_par_phases[phase]->set_or_add_thread_work_item(worker_i, count, index);
+void G1GCPhaseTimes::record_or_add_thread_work_item(GCParPhases phase, uint worker_id, size_t count, uint index) {
+  _gc_par_phases[phase]->set_or_add_thread_work_item(worker_id, count, index);
 }
 
-size_t G1GCPhaseTimes::get_thread_work_item(GCParPhases phase, uint worker_i, uint index) {
-  return _gc_par_phases[phase]->get_thread_work_item(worker_i, index);
+size_t G1GCPhaseTimes::get_thread_work_item(GCParPhases phase, uint worker_id, uint index) {
+  return _gc_par_phases[phase]->get_thread_work_item(worker_id, index);
 }
 
 // return the average time for a phase in milliseconds
@@ -418,14 +416,14 @@ double G1GCPhaseTimes::print_pre_evacuate_collection_set() const {
 }
 
 double G1GCPhaseTimes::print_evacuate_optional_collection_set() const {
-  const double sum_ms = _cur_optional_evac_ms + _cur_optional_merge_heap_roots_time_ms;
+  const double sum_ms = _cur_optional_evac_time_ms + _cur_optional_merge_heap_roots_time_ms;
   if (sum_ms > 0) {
     info_time("Merge Optional Heap Roots", _cur_optional_merge_heap_roots_time_ms);
 
     debug_time("Prepare Optional Merge Heap Roots", _cur_optional_prepare_merge_heap_roots_time_ms);
     debug_phase(_gc_par_phases[OptMergeRS]);
 
-    info_time("Evacuate Optional Collection Set", _cur_optional_evac_ms);
+    info_time("Evacuate Optional Collection Set", _cur_optional_evac_time_ms);
     debug_phase(_gc_par_phases[OptScanHR]);
     debug_phase(_gc_par_phases[OptObjCopy]);
     debug_phase(_gc_par_phases[OptCodeRoots]);
@@ -567,8 +565,6 @@ const char* G1GCPhaseTimes::phase_name(GCParPhases phase) {
       "JVMTIRoots",
       AOT_ONLY("AOTCodeRoots" COMMA)
       "CMRefRoots",
-      "WaitForStrongCLD",
-      "WeakCLDRoots",
       "MergeER",
       "MergeRS",
       "OptMergeRS",

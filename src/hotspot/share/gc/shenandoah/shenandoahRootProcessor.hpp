@@ -254,6 +254,9 @@ private:
   ShenandoahVMRoots<false /*concurrent*/>                  _vm_roots;
   ShenandoahClassLoaderDataRoots<false /*concurrent*/, true /*single threaded*/>
                                                            _cld_roots;
+  ShenandoahSerialWeakRoots                                _serial_weak_roots;
+  ShenandoahWeakRoots<false /*concurrent*/>                _weak_roots;
+  ShenandoahStringDedupRoots                               _dedup_roots;
   ShenandoahCodeCacheRoots<ShenandoahAllCodeRootsIterator> _code_roots;
 
 public:
@@ -301,6 +304,8 @@ public:
 
   template<typename IsAlive, typename KeepAlive>
   void roots_do(uint worker_id, IsAlive* is_alive, KeepAlive* keep_alive);
+
+  void strong_roots_do(uint worker_id, OopClosure* oops_cl);
 };
 
 // Adjuster all roots at a safepoint during full gc
