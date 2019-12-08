@@ -214,6 +214,10 @@ private:
 
   void set_used(size_t bytes);
 
+  // Number of bytes used in all regions during GC. Typically changed when
+  // retiring a GC alloc region.
+  size_t _bytes_used_during_gc;
+
   // Class that handles archive allocation ranges.
   G1ArchiveAllocator* _archive_allocator;
 
@@ -262,12 +266,11 @@ private:
 
   // Return true if an explicit GC should start a concurrent cycle instead
   // of doing a STW full GC. A concurrent cycle should be started if:
-  // (a) cause == _gc_locker and +GCLockerInvokesConcurrent,
-  // (b) cause == _g1_humongous_allocation,
-  // (c) cause == _java_lang_system_gc and +ExplicitGCInvokesConcurrent,
-  // (d) cause == _dcmd_gc_run and +ExplicitGCInvokesConcurrent,
-  // (e) cause == _wb_conc_mark,
-  // (f) cause == _g1_periodic_collection and +G1PeriodicGCInvokesConcurrent.
+  // (a) cause == _g1_humongous_allocation,
+  // (b) cause == _java_lang_system_gc and +ExplicitGCInvokesConcurrent,
+  // (c) cause == _dcmd_gc_run and +ExplicitGCInvokesConcurrent,
+  // (d) cause == _wb_conc_mark,
+  // (e) cause == _g1_periodic_collection and +G1PeriodicGCInvokesConcurrent.
   bool should_do_concurrent_full_gc(GCCause::Cause cause);
 
   // Attempt to start a concurrent cycle with the indicated cause.
@@ -590,6 +593,7 @@ public:
   // These are only valid for starts_humongous regions.
   inline void set_humongous_reclaim_candidate(uint region, bool value);
   inline bool is_humongous_reclaim_candidate(uint region);
+  inline void set_has_humongous_reclaim_candidate(bool value);
 
   // Remove from the reclaim candidate set.  Also remove from the
   // collection set so that later encounters avoid the slow path.
@@ -597,8 +601,7 @@ public:
 
   // Register the given region to be part of the collection set.
   inline void register_humongous_region_with_region_attr(uint index);
-  // Update region attributes table with information about all regions.
-  void register_regions_with_region_attr();
+
   // We register a region with the fast "in collection set" test. We
   // simply set to true the array slot corresponding to this region.
   void register_young_region_with_region_attr(HeapRegion* r) {
@@ -1166,10 +1169,6 @@ public:
 
   // Iterate over all objects, calling "cl.do_object" on each.
   virtual void object_iterate(ObjectClosure* cl);
-
-  virtual void safe_object_iterate(ObjectClosure* cl) {
-    object_iterate(cl);
-  }
 
   // Iterate over heap regions, in address order, terminating the
   // iteration early if the "do_heap_region" method returns "true".
