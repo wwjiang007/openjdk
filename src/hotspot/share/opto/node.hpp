@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -52,7 +52,6 @@ class CallNode;
 class CallRuntimeNode;
 class CallStaticJavaNode;
 class CastIINode;
-class CastLLNode;
 class CatchNode;
 class CatchProjNode;
 class CheckCastPPNode;
@@ -146,6 +145,7 @@ class StartNode;
 class State;
 class StoreNode;
 class SubNode;
+class SubTypeCheckNode;
 class Type;
 class TypeNode;
 class UnlockNode;
@@ -666,8 +666,7 @@ public:
       DEFINE_CLASS_ID(Phi,   Type, 0)
       DEFINE_CLASS_ID(ConstraintCast, Type, 1)
         DEFINE_CLASS_ID(CastII, ConstraintCast, 0)
-        DEFINE_CLASS_ID(CastLL, ConstraintCast, 1)
-        DEFINE_CLASS_ID(CheckCastPP, ConstraintCast, 2)
+        DEFINE_CLASS_ID(CheckCastPP, ConstraintCast, 1)
       DEFINE_CLASS_ID(CMove, Type, 3)
       DEFINE_CLASS_ID(SafePointScalarObject, Type, 4)
       DEFINE_CLASS_ID(DecodeNarrowPtr, Type, 5)
@@ -706,6 +705,7 @@ public:
       DEFINE_CLASS_ID(Cmp,   Sub, 0)
         DEFINE_CLASS_ID(FastLock,   Cmp, 0)
         DEFINE_CLASS_ID(FastUnlock, Cmp, 1)
+        DEFINE_CLASS_ID(SubTypeCheck,Cmp, 2)
 
     DEFINE_CLASS_ID(MergeMem, Node, 7)
     DEFINE_CLASS_ID(Bool,     Node, 8)
@@ -738,24 +738,28 @@ public:
     Flag_is_scheduled                = Flag_is_reduction << 1,
     Flag_has_vector_mask_set         = Flag_is_scheduled << 1,
     Flag_is_expensive                = Flag_has_vector_mask_set << 1,
-    _max_flags = (Flag_is_expensive << 1) - 1 // allow flags combination
+    _last_flag                       = Flag_is_expensive
   };
+
+  class PD;
 
 private:
   jushort _class_id;
   jushort _flags;
+
+  static juint max_flags();
 
 protected:
   // These methods should be called from constructors only.
   void init_class_id(jushort c) {
     _class_id = c; // cast out const
   }
-  void init_flags(jushort fl) {
-    assert(fl <= _max_flags, "invalid node flag");
+  void init_flags(uint fl) {
+    assert(fl <= max_flags(), "invalid node flag");
     _flags |= fl;
   }
-  void clear_flag(jushort fl) {
-    assert(fl <= _max_flags, "invalid node flag");
+  void clear_flag(uint fl) {
+    assert(fl <= max_flags(), "invalid node flag");
     _flags &= ~fl;
   }
 
@@ -805,7 +809,6 @@ public:
   DEFINE_CLASS_QUERY(CatchProj)
   DEFINE_CLASS_QUERY(CheckCastPP)
   DEFINE_CLASS_QUERY(CastII)
-  DEFINE_CLASS_QUERY(CastLL)
   DEFINE_CLASS_QUERY(ConstraintCast)
   DEFINE_CLASS_QUERY(ClearArray)
   DEFINE_CLASS_QUERY(CMove)
@@ -875,6 +878,7 @@ public:
   DEFINE_CLASS_QUERY(Start)
   DEFINE_CLASS_QUERY(Store)
   DEFINE_CLASS_QUERY(Sub)
+  DEFINE_CLASS_QUERY(SubTypeCheck)
   DEFINE_CLASS_QUERY(Type)
   DEFINE_CLASS_QUERY(Vector)
   DEFINE_CLASS_QUERY(LoadVector)
@@ -1177,6 +1181,7 @@ public:
   Node* _debug_orig;                   // Original version of this, if any.
   Node*  debug_orig() const            { return _debug_orig; }
   void   set_debug_orig(Node* orig);   // _debug_orig = orig
+  void   dump_orig(outputStream *st, bool print_key = true) const;
 
   int        _hash_lock;               // Barrier to modifications of nodes in the hash table
   void  enter_hash_lock() { ++_hash_lock; assert(_hash_lock < 99, "in too many hash tables?"); }
@@ -1553,6 +1558,11 @@ public:
 
   // Used after parsing to remove useless nodes before Iterative GVN
   void remove_useless_nodes(VectorSet& useful);
+
+  bool contains(const Node* n) const {
+    fatal("use faster member() instead");
+    return false;
+  }
 
 #ifndef PRODUCT
   void print_set() const { _in_worklist.print(); }

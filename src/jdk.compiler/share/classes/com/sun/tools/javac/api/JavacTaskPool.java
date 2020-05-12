@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, 2018, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2015, 2019, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -68,12 +68,14 @@ import com.sun.tools.javac.comp.Modules;
 import com.sun.tools.javac.main.Arguments;
 import com.sun.tools.javac.main.JavaCompiler;
 import com.sun.tools.javac.model.JavacElements;
+import com.sun.tools.javac.platform.PlatformDescription;
 import com.sun.tools.javac.tree.JCTree.JCClassDecl;
 import com.sun.tools.javac.tree.JCTree.LetExpr;
 import com.sun.tools.javac.util.Context;
 import com.sun.tools.javac.util.DefinedBy;
 import com.sun.tools.javac.util.DefinedBy.Api;
 import com.sun.tools.javac.util.Log;
+import com.sun.tools.javac.util.Options;
 
 /**
  * A pool of reusable JavacTasks. When a task is no valid anymore, it is returned to the pool,
@@ -129,7 +131,7 @@ public class JavacTaskPool {
      * @param out a Writer for additional output from the compiler;
      * use {@code System.err} if {@code null}
      * @param fileManager a file manager; if {@code null} use the
-     * compiler's standard filemanager
+     * compiler's standard file manager
      * @param diagnosticListener a diagnostic listener; if {@code
      * null} use the compiler's default method for reporting
      * diagnostics
@@ -252,6 +254,7 @@ public class JavacTaskPool {
             drop(JavacTask.class);
             drop(JavacTrees.class);
             drop(JavacElements.class);
+            drop(PlatformDescription.class);
 
             if (ht.get(Log.logKey) instanceof ReusableLog) {
                 //log already inited - not first round
@@ -266,6 +269,7 @@ public class JavacTaskPool {
                 Annotate.instance(this).newRound();
                 CompileStates.instance(this).clear();
                 MultiTaskListener.instance(this).clear();
+                Options.instance(this).clear();
 
                 //find if any of the roots have redefined java.* classes
                 Symtab syms = Symtab.instance(this);

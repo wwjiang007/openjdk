@@ -51,7 +51,15 @@ void DebugInfoWriteStream::write_metadata(Metadata* h) {
 }
 
 oop DebugInfoReadStream::read_oop() {
-  oop o = code()->oop_at(read_int());
+  nmethod* nm = const_cast<CompiledMethod*>(code())->as_nmethod_or_null();
+  oop o;
+  if (nm != NULL) {
+    // Despite these oops being found inside nmethods that are on-stack,
+    // they are not kept alive by all GCs (e.g. G1 and Shenandoah).
+    o = nm->oop_at_phantom(read_int());
+  } else {
+    o = code()->oop_at(read_int());
+  }
   assert(oopDesc::is_oop_or_null(o), "oop only");
   return o;
 }
@@ -89,7 +97,7 @@ ScopeValue* DebugInfoReadStream::get_cached_object() {
 enum { LOCATION_CODE = 0, CONSTANT_INT_CODE = 1,  CONSTANT_OOP_CODE = 2,
                           CONSTANT_LONG_CODE = 3, CONSTANT_DOUBLE_CODE = 4,
                           OBJECT_CODE = 5,        OBJECT_ID_CODE = 6,
-                          AUTO_BOX_OBJECT_CODE = 7 };
+                          AUTO_BOX_OBJECT_CODE = 7, MARKER_CODE = 8 };
 
 ScopeValue* ScopeValue::read_from(DebugInfoReadStream* stream) {
   ScopeValue* result = NULL;
@@ -102,6 +110,7 @@ ScopeValue* ScopeValue::read_from(DebugInfoReadStream* stream) {
    case OBJECT_CODE:          result = stream->read_object_value(false /*is_auto_box*/); break;
    case AUTO_BOX_OBJECT_CODE: result = stream->read_object_value(true /*is_auto_box*/);  break;
    case OBJECT_ID_CODE:       result = stream->get_cached_object();                      break;
+   case MARKER_CODE:          result = new MarkerValue();                                break;
    default: ShouldNotReachHere();
   }
   return result;
@@ -120,6 +129,16 @@ void LocationValue::write_on(DebugInfoWriteStream* stream) {
 
 void LocationValue::print_on(outputStream* st) const {
   location().print_on(st);
+}
+
+// MarkerValue
+
+void MarkerValue::write_on(DebugInfoWriteStream* stream) {
+  stream->write_int(MARKER_CODE);
+}
+
+void MarkerValue::print_on(outputStream* st) const {
+    st->print("marker");
 }
 
 // ObjectValue

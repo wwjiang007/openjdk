@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018, 2019, Red Hat, Inc. All rights reserved.
+ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 only, as
@@ -54,19 +55,11 @@
     }                                                                       \
   } while (0)
 
-#define SHENANDOAH_CHECK_FLAG_SET(name)                                     \
-  do {                                                                      \
-    if (!name) {                                                            \
-      err_msg message("Heuristics needs -XX:+" #name " to work correctly"); \
-      vm_exit_during_initialization("Error", message);                      \
-    }                                                                       \
-  } while (0)
-
 class ShenandoahCollectionSet;
 class ShenandoahHeapRegion;
 
 class ShenandoahHeuristics : public CHeapObj<mtGC> {
-  static const intx Concurrent_Adjust   =  1; // recover from penalties
+  static const intx Concurrent_Adjust   = -1; // recover from penalties
   static const intx Degenerated_Penalty = 10; // how much to penalize average GC duration history on Degenerated GC
   static const intx Full_Penalty        = 20; // how much to penalize average GC duration history on Full GC
 
@@ -74,48 +67,34 @@ protected:
   typedef struct {
     ShenandoahHeapRegion* _region;
     size_t _garbage;
-    uint64_t _seqnum_last_alloc;
   } RegionData;
 
-  bool _update_refs_early;
-  bool _update_refs_adaptive;
-
   RegionData* _region_data;
-  size_t _region_data_size;
 
   uint _degenerated_cycles_in_a_row;
   uint _successful_cycles_in_a_row;
-
-  size_t _bytes_in_cset;
 
   double _cycle_start;
   double _last_cycle_end;
 
   size_t _gc_times_learned;
-  size_t _gc_time_penalties;
+  intx _gc_time_penalties;
   TruncatedSeq* _gc_time_history;
 
   // There may be many threads that contend to set this flag
   ShenandoahSharedFlag _metaspace_oom;
 
   static int compare_by_garbage(RegionData a, RegionData b);
-  static int compare_by_garbage_then_alloc_seq_ascending(RegionData a, RegionData b);
-  static int compare_by_alloc_seq_ascending(RegionData a, RegionData b);
-  static int compare_by_alloc_seq_descending(RegionData a, RegionData b);
-
-  RegionData* get_region_data_cache(size_t num);
 
   virtual void choose_collection_set_from_regiondata(ShenandoahCollectionSet* set,
                                                      RegionData* data, size_t data_size,
                                                      size_t free) = 0;
 
+  void adjust_penalty(intx step);
+
 public:
   ShenandoahHeuristics();
   virtual ~ShenandoahHeuristics();
-
-  void record_gc_start();
-
-  void record_gc_end();
 
   void record_metaspace_oom()     { _metaspace_oom.set(); }
   void clear_metaspace_oom()      { _metaspace_oom.unset(); }
@@ -125,11 +104,7 @@ public:
 
   virtual void record_cycle_end();
 
-  virtual void record_phase_time(ShenandoahPhaseTimings::Phase phase, double secs);
-
   virtual bool should_start_gc() const;
-
-  virtual bool should_start_update_refs();
 
   virtual bool should_degenerate_cycle();
 

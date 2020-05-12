@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -373,7 +373,7 @@ public abstract class SSLContextImpl extends SSLContextSpi {
     private static List<CipherSuite> getApplicableCipherSuites(
             Collection<CipherSuite> allowedCipherSuites,
             List<ProtocolVersion> protocols) {
-        TreeSet<CipherSuite> suites = new TreeSet<>();
+        LinkedHashSet<CipherSuite> suites = new LinkedHashSet<>();
         if (protocols != null && (!protocols.isEmpty())) {
             for (CipherSuite suite : allowedCipherSuites) {
                 if (!suite.isAvailable()) {
@@ -1178,6 +1178,10 @@ public abstract class SSLContextImpl extends SSLContextSpi {
         @Override
         protected SSLParameters engineGetDefaultSSLParameters() {
             SSLEngine engine = createSSLEngineImpl();
+            // Note: The TLSContext defaults to client side SSLParameters.
+            // We can do the same here. Please don't change the behavior
+            // for compatibility.
+            engine.setUseClientMode(true);
             return engine.getSSLParameters();
         }
 

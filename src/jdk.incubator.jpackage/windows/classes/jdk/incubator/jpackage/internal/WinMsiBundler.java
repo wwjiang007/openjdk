@@ -258,20 +258,7 @@ public class WinMsiBundler  extends AbstractBundler {
                                 PRODUCT_VERSION.getID()));
             }
 
-            // only one mime type per association, at least one file extension
-            List<Map<String, ? super Object>> associations =
-                    FILE_ASSOCIATIONS.fetchFrom(params);
-            if (associations != null) {
-                for (int i = 0; i < associations.size(); i++) {
-                    Map<String, ? super Object> assoc = associations.get(i);
-                    List<String> mimes = FA_CONTENT_TYPE.fetchFrom(assoc);
-                    if (mimes.size() > 1) {
-                        throw new ConfigException(MessageFormat.format(
-                                I18N.getString("error.too-many-content-types-for-file-association"), i),
-                                I18N.getString("error.too-many-content-types-for-file-association.advice"));
-                    }
-                }
-            }
+            FileAssociation.verify(FileAssociation.fetchFrom(params));
 
             return true;
         } catch (RuntimeException re) {
@@ -350,6 +337,21 @@ public class WinMsiBundler  extends AbstractBundler {
                     MSI_IMAGE_DIR.fetchFrom(params), true);
         }
 
+        // Configure installer icon
+        if (StandardBundlerParam.isRuntimeInstaller(params)) {
+            // Use icon from java launcher.
+            // Assume java.exe exists in Java Runtime being packed.
+            // Ignore custom icon if any as we don't want to copy anything in
+            // Java Runtime image.
+            installerIcon = ApplicationLayout.javaRuntime()
+                    .runtimeDirectory()
+                    .resolve(Path.of("bin", "java.exe"));
+        } else {
+            installerIcon = ApplicationLayout.windowsAppImage()
+                    .launchersDirectory()
+                    .resolve(APP_NAME.fetchFrom(params) + ".exe");
+        }
+
         params.put(WIN_APP_IMAGE.getID(), appDir);
 
         String licenseFile = LICENSE_FILE.fetchFrom(params);
@@ -414,11 +416,13 @@ public class WinMsiBundler  extends AbstractBundler {
                 upgradeCode));
 
         data.put("JpAllowUpgrades", "yes");
+        data.put("JpAllowDowngrades", "yes");
 
         data.put("JpAppName", APP_NAME.fetchFrom(params));
         data.put("JpAppDescription", DESCRIPTION.fetchFrom(params));
         data.put("JpAppVendor", VENDOR.fetchFrom(params));
         data.put("JpAppVersion", PRODUCT_VERSION.fetchFrom(params));
+        data.put("JpIcon", installerIcon.toString());
 
         final Path configDir = CONFIG_ROOT.fetchFrom(params).toPath();
 
@@ -585,6 +589,7 @@ public class WinMsiBundler  extends AbstractBundler {
 
     }
 
+    private Path installerIcon;
     private Map<WixTool, WixTool.ToolInfo> wixToolset;
     private WixSourcesBuilder wixSourcesBuilder = new WixSourcesBuilder();
 

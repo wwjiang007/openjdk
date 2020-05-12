@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2019, Red Hat, Inc. All rights reserved.
+ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 only, as
@@ -32,6 +33,9 @@ class ShenandoahNormalMode : public ShenandoahMode {
 public:
   virtual void initialize_flags() const;
   virtual ShenandoahHeuristics* initialize_heuristics() const;
+  virtual const char* name()     { return "Normal"; }
+  virtual bool is_diagnostic()   { return false; }
+  virtual bool is_experimental() { return false; }
 };
 
 #endif // SHARE_GC_SHENANDOAH_SHENANDOAHNORMALMODE_HPP

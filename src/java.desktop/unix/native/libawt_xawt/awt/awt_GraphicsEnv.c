@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -405,15 +405,8 @@ getAllConfigs (JNIEnv *env, int screen, AwtScreenDataPtr screenDataPtr) {
         DTRACE_PRINTLN("RENDER extension available");
         xrenderLibHandle = dlopen("libXrender.so.1", RTLD_LAZY | RTLD_GLOBAL);
 
-#ifdef MACOSX
-#define XRENDER_LIB "/usr/X11/lib/libXrender.dylib"
-#else
-#define XRENDER_LIB "libXrender.so"
-#endif
-
         if (xrenderLibHandle == NULL) {
-            xrenderLibHandle = dlopen(XRENDER_LIB,
-                                      RTLD_LAZY | RTLD_GLOBAL);
+            xrenderLibHandle = dlopen("libXrender.so", RTLD_LAZY | RTLD_GLOBAL);
         }
 
 #if defined(__solaris__)
@@ -783,11 +776,6 @@ AwtGraphicsConfigDataPtr
 getDefaultConfig(int screen) {
     ensureConfigsInited(NULL, screen);
     return x11Screens[screen].defaultConfig;
-}
-
-AwtScreenDataPtr
-getScreenData(int screen) {
-    return &(x11Screens[screen]);
 }
 #endif /* !HEADLESS */
 

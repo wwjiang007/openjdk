@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -1047,7 +1047,7 @@ void nmethod::fix_oop_relocations(address begin, address end, bool initialize_im
       oop_Relocation* reloc = iter.oop_reloc();
       if (initialize_immediates && reloc->oop_is_immediate()) {
         oop* dest = reloc->oop_addr();
-        initialize_immediate_oop(dest, (jobject) *dest);
+        initialize_immediate_oop(dest, cast_from_oop<jobject>(*dest));
       }
       // Refresh the oop-related bits of this instruction.
       reloc->fix_oop_relocation();
@@ -1567,6 +1567,12 @@ void nmethod::flush_dependencies(bool delete_immediately) {
 // Transfer information from compilation to jvmti
 void nmethod::post_compiled_method_load_event(JvmtiThreadState* state) {
 
+  // Don't post this nmethod load event if it is already dying
+  // because the sweeper might already be deleting this nmethod.
+  if (is_not_entrant() && can_convert_to_zombie()) {
+    return;
+  }
+
   // This is a bad time for a safepoint.  We don't want
   // this nmethod to get unloaded while we're queueing the event.
   NoSafepointVerifier nsv;
@@ -1585,15 +1591,16 @@ void nmethod::post_compiled_method_load_event(JvmtiThreadState* state) {
   if (JvmtiExport::should_post_compiled_method_load()) {
     // Only post unload events if load events are found.
     set_load_reported();
-    // Keep sweeper from turning this into zombie until it is posted.
-    mark_as_seen_on_stack();
-
     // If a JavaThread hasn't been passed in, let the Service thread
     // (which is a real Java thread) post the event
     JvmtiDeferredEvent event = JvmtiDeferredEvent::compiled_method_load_event(this);
     if (state == NULL) {
+      // Execute any barrier code for this nmethod as if it's called, since
+      // keeping it alive looks like stack walking.
+      run_nmethod_entry_barrier();
       ServiceThread::enqueue_deferred_event(&event);
     } else {
+      // This enters the nmethod barrier outside in the caller.
       state->enqueue_event(&event);
     }
   }
@@ -3144,12 +3151,10 @@ void nmethod::print_nmethod_labels(outputStream* stream, address block_begin, bo
           m->method_holder()->print_value_on(stream);
         } else {
           bool did_name = false;
-          if (!at_this && ss.is_object()) {
-            Symbol* name = ss.as_symbol_or_null();
-            if (name != NULL) {
-              name->print_value_on(stream);
-              did_name = true;
-            }
+          if (!at_this && ss.is_reference()) {
+            Symbol* name = ss.as_symbol();
+            name->print_value_on(stream);
+            did_name = true;
           }
           if (!did_name)
             stream->print("%s", type2name(t));

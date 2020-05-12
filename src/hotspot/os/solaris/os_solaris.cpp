@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -537,13 +537,6 @@ void os::init_system_properties_values() {
 
 void os::breakpoint() {
   BREAKPOINT;
-}
-
-bool os::Solaris::valid_stack_address(Thread* thread, address sp) {
-  address  stackStart  = (address)thread->stack_base();
-  address  stackEnd    = (address)(stackStart - (address)thread->stack_size());
-  if (sp < stackStart && sp >= stackEnd) return true;
-  return false;
 }
 
 extern "C" void breakpoint() {
@@ -1154,14 +1147,6 @@ void os::shutdown() {
 void os::abort(bool dump_core, void* siginfo, const void* context) {
   os::shutdown();
   if (dump_core) {
-#ifndef PRODUCT
-    fdStream out(defaultStream::output_fd());
-    out.print_raw("Current thread is ");
-    char buf[16];
-    jio_snprintf(buf, sizeof(buf), UINTX_FORMAT, os::current_thread_id());
-    out.print_raw_cr(buf);
-    out.print_raw_cr("Dumping core ...");
-#endif
     ::abort(); // dump core (for debugging)
   }
 
@@ -1431,10 +1416,6 @@ void * os::dll_load(const char *filename, char *ebuf, int ebuflen) {
     unsigned char endianess;    // MSB or LSB
     char*         name;         // String representation
   } arch_t;
-
-#ifndef EM_AARCH64
-  #define EM_AARCH64    183               /* ARM AARCH64 */
-#endif
 
   static const arch_t arch_array[]={
     {EM_386,         EM_386,     ELFCLASS32, ELFDATA2LSB, (char*)"IA 32"},
@@ -2613,12 +2594,12 @@ bool os::Solaris::setup_large_pages(caddr_t start, size_t bytes, size_t align) {
   return true;
 }
 
-char* os::reserve_memory_special(size_t size, size_t alignment, char* addr, bool exec) {
+char* os::pd_reserve_memory_special(size_t size, size_t alignment, char* addr, bool exec) {
   fatal("os::reserve_memory_special should not be called on Solaris.");
   return NULL;
 }
 
-bool os::release_memory_special(char* base, size_t bytes) {
+bool os::pd_release_memory_special(char* base, size_t bytes) {
   fatal("os::release_memory_special should not be called on Solaris.");
   return false;
 }
@@ -3927,20 +3908,23 @@ jint os::init_2(void) {
 
   if (UseNUMA) {
     if (!Solaris::liblgrp_init()) {
-      UseNUMA = false;
+      FLAG_SET_ERGO(UseNUMA, false);
     } else {
       size_t lgrp_limit = os::numa_get_groups_num();
       int *lgrp_ids = NEW_C_HEAP_ARRAY(int, lgrp_limit, mtInternal);
       size_t lgrp_num = os::numa_get_leaf_groups(lgrp_ids, lgrp_limit);
       FREE_C_HEAP_ARRAY(int, lgrp_ids);
       if (lgrp_num < 2) {
-        // There's only one locality group, disable NUMA.
-        UseNUMA = false;
+        // There's only one locality group, disable NUMA unless
+        // user explicilty forces NUMA optimizations on single-node/UMA systems
+        UseNUMA = ForceNUMA;
       }
     }
-    if (!UseNUMA && ForceNUMA) {
-      UseNUMA = true;
-    }
+  }
+
+  // When NUMA requested, not-NUMA-aware allocations default to interleaving.
+  if (UseNUMA && !UseNUMAInterleaving) {
+    FLAG_SET_ERGO_IF_DEFAULT(UseNUMAInterleaving, true);
   }
 
   Solaris::signal_sets_init();
@@ -4014,22 +3998,6 @@ jint os::init_2(void) {
   os::Posix::init_2();
 
   return JNI_OK;
-}
-
-// Mark the polling page as unreadable
-void os::make_polling_page_unreadable(void) {
-  Events::log(NULL, "Protecting polling page " INTPTR_FORMAT " with PROT_NONE", p2i(_polling_page));
-  if (mprotect((char *)_polling_page, page_size, PROT_NONE) != 0) {
-    fatal("Could not disable polling page");
-  }
-}
-
-// Mark the polling page as readable
-void os::make_polling_page_readable(void) {
-  Events::log(NULL, "Protecting polling page " INTPTR_FORMAT " with PROT_READ", p2i(_polling_page));
-  if (mprotect((char *)_polling_page, page_size, PROT_READ) != 0) {
-    fatal("Could not enable polling page");
-  }
 }
 
 // Is a (classpath) directory empty?

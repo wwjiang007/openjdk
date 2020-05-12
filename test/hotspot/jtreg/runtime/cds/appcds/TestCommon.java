@@ -226,6 +226,7 @@ public class TestCommon extends CDSTestUtils {
         } else {
             // static dump
             cmd.add("-Xshare:dump");
+            cmd.add("-Xlog:cds");
             cmd.add("-XX:SharedArchiveFile=" + opts.archiveName);
 
             if (opts.classList != null) {
@@ -237,8 +238,7 @@ public class TestCommon extends CDSTestUtils {
             }
         }
 
-        String[] cmdLine = cmd.toArray(new String[cmd.size()]);
-        ProcessBuilder pb = ProcessTools.createJavaProcessBuilder(true, cmdLine);
+        ProcessBuilder pb = ProcessTools.createTestJvm(cmd);
         if (opts.appJarDir != null) {
             pb.directory(new File(opts.appJarDir));
         }
@@ -384,8 +384,7 @@ public class TestCommon extends CDSTestUtils {
             }
         }
 
-        String[] cmdLine = cmd.toArray(new String[cmd.size()]);
-        ProcessBuilder pb = ProcessTools.createJavaProcessBuilder(true, cmdLine);
+        ProcessBuilder pb = ProcessTools.createTestJvm(cmd);
         if (opts.appJarDir != null) {
             pb.directory(new File(opts.appJarDir));
         }

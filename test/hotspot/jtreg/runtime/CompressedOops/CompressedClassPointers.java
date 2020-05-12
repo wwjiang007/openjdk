@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2013, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -29,7 +29,7 @@
  * @library /test/lib
  * @modules java.base/jdk.internal.misc
  *          java.management
- * @run main CompressedClassPointers
+ * @run driver CompressedClassPointers
  */
 
 import jdk.test.lib.Platform;
@@ -114,7 +114,7 @@ public class CompressedClassPointers {
             "-XX:SharedBaseAddress=8g",
             "-XX:+PrintCompressedOopsMode",
             "-XX:+VerifyBeforeGC",
-            "-Xshare:dump");
+            "-Xshare:dump", "-Xlog:cds");
         OutputAnalyzer output = new OutputAnalyzer(pb.start());
         if (output.firstMatch("Shared spaces are not supported in this VM") != null) {
             return;

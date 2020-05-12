@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2019, Red Hat, Inc. All rights reserved.
+ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 only, as
@@ -56,9 +57,9 @@ public class TestObjItrWithHeapDump {
         }
 
         String[][][] modeHeuristics = new String[][][] {
-             {{"normal"},    {"adaptive", "compact", "static", "aggressive"}},
-             {{"traversal"}, {"adaptive", "aggressive"}},
-             {{"passive"},   {"passive"}}
+             {{"normal"},  {"adaptive", "compact", "static", "aggressive"}},
+             {{"iu"},      {"adaptive", "aggressive"}},
+             {{"passive"}, {"passive"}}
         };
 
         for (String[][] mh : modeHeuristics) {

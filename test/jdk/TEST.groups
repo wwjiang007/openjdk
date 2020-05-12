@@ -1,4 +1,4 @@
-#  Copyright (c) 2013, 2019, Oracle and/or its affiliates. All rights reserved.
+#  Copyright (c) 2013, 2020, Oracle and/or its affiliates. All rights reserved.
 #  DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 #
 #  This code is free software; you can redistribute it and/or modify it
@@ -40,6 +40,7 @@ tier1_part2 = \
 tier1_part3 = \
     :jdk_math \
     :jdk_svc_sanity \
+    :jdk_foreign \
     java/nio/Buffer \
     com/sun/crypto/provider/Cipher \
     sun/nio/cs/ISO8859x.java
@@ -75,7 +76,8 @@ tier3 = \
     :jdk_beans \
     :jdk_imageio \
     :jdk_sound \
-    :jdk_client_sanity
+    :jdk_client_sanity \
+    :jdk_jfr_tier3
 
 ###############################################################################
 #
@@ -263,13 +265,11 @@ jdk_launcher = \
 core_tools = \
     tools \
     jdk/internal/jrtfs \
-    sun/tools/java \
     sun/tools/jrunscript
 
 svc_tools = \
     com/sun/tools/attach \
     sun/tools \
-    -sun/tools/java \
     -sun/tools/jrunscript \
     sun/jvmstat
 
@@ -279,6 +279,9 @@ jdk_tools = \
 
 jdk_jfr = \
     jdk/jfr
+
+jdk_jfr_tier3 = \
+    jdk/jfr/event/metadata/TestLookForUntestedEvents.java
 
 #
 # Catch-all for other areas with a small number of tests
@@ -332,6 +335,9 @@ jdk_svc = \
     :jdk_jfr \
     :svc_tools
 
+jdk_foreign = \
+    java/foreign
+
 #############################
 
 #
@@ -352,7 +358,6 @@ jdk_beans = \
     java/beans
 
 jdk_swing = \
-    javax/accessibility \
     javax/swing \
     com/sun/java/swing
 
@@ -361,6 +366,10 @@ jdk_sound = \
 
 jdk_imageio = \
     javax/imageio
+
+jdk_accessibility = \
+    javax/accessibility \
+    com/sun/java/accessibility
 
 jfc_demo = \
      demo/jfc
@@ -372,6 +381,7 @@ jdk_desktop = \
     :jdk_swing \
     :jdk_sound \
     :jdk_imageio \
+    :jdk_accessibility \
     :jfc_demo \
     :jdk_client_sanity
 
@@ -460,7 +470,8 @@ jdk_jfr_sanity = \
     jdk/jfr/event/gc/collection/TestGCWithFasttime.java \
     jdk/jfr/event/gc/configuration/TestGCConfigurationEvent.java \
     jdk/jfr/event/metadata/TestDefaultConfigurations.java \
-    jdk/jfr/startupargs/TestDumpOnExit.java
+    jdk/jfr/startupargs/TestDumpOnExit.java \
+    jdk/jfr/api/consumer/recordingstream/TestBasics.java
 
 svc_tools_sanity =
 

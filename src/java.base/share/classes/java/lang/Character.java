@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2002, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,13 +25,21 @@
 
 package java.lang;
 
-import java.util.Arrays;
-import java.util.Map;
-import java.util.HashMap;
-import java.util.Locale;
-
 import jdk.internal.HotSpotIntrinsicCandidate;
 import jdk.internal.misc.VM;
+
+import java.lang.constant.Constable;
+import java.lang.constant.DynamicConstantDesc;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+
+import static java.lang.constant.ConstantDescs.BSM_EXPLICIT_CAST;
+import static java.lang.constant.ConstantDescs.CD_char;
+import static java.lang.constant.ConstantDescs.CD_int;
+import static java.lang.constant.ConstantDescs.DEFAULT_NAME;
 
 /**
  * The {@code Character} class wraps a value of the primitive
@@ -122,7 +130,7 @@ import jdk.internal.misc.VM;
  * @since   1.0
  */
 public final
-class Character implements java.io.Serializable, Comparable<Character> {
+class Character implements java.io.Serializable, Comparable<Character>, Constable {
     /**
      * The minimum radix available for conversion to and from strings.
      * The constant value of this field is the smallest value permitted
@@ -242,7 +250,7 @@ class Character implements java.io.Serializable, Comparable<Character> {
      * General category "Nd" in the Unicode specification.
      * @since   1.1
      */
-    public static final byte DECIMAL_DIGIT_NUMBER        = 9;
+    public static final byte DECIMAL_DIGIT_NUMBER = 9;
 
     /**
      * General category "Nl" in the Unicode specification.
@@ -390,7 +398,7 @@ class Character implements java.io.Serializable, Comparable<Character> {
     public static final byte DIRECTIONALITY_RIGHT_TO_LEFT = 1;
 
     /**
-    * Strong bidirectional character type "AL" in the Unicode specification.
+     * Strong bidirectional character type "AL" in the Unicode specification.
      * @since 1.4
      */
     public static final byte DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC = 2;
@@ -602,6 +610,17 @@ class Character implements java.io.Serializable, Comparable<Character> {
      */
     public static final int MAX_CODE_POINT = 0X10FFFF;
 
+    /**
+     * Returns an {@link Optional} containing the nominal descriptor for this
+     * instance.
+     *
+     * @return an {@link Optional} describing the {@linkplain Character} instance
+     * @since 15
+     */
+    @Override
+    public Optional<DynamicConstantDesc<Character>> describeConstable() {
+        return Optional.of(DynamicConstantDesc.ofNamed(BSM_EXPLICIT_CAST, DEFAULT_NAME, CD_char, (int) value));
+    }
 
     /**
      * Instances of this class represent particular subsets of the Unicode
@@ -3181,7 +3200,7 @@ class Character implements java.io.Serializable, Comparable<Character> {
                              "MAYAN NUMERALS",
                              "MAYANNUMERALS");
 
-       /**
+        /**
          * Constant for the "Indic Siyaq Numbers" Unicode
          * character block.
          * @since 12
@@ -3285,7 +3304,7 @@ class Character implements java.io.Serializable, Comparable<Character> {
                              "SYMBOLS AND PICTOGRAPHS EXTENDED-A",
                              "SYMBOLSANDPICTOGRAPHSEXTENDED-A");
 
-        private static final int blockStarts[] = {
+        private static final int[] blockStarts = {
             0x0000,   // 0000..007F; Basic Latin
             0x0080,   // 0080..00FF; Latin-1 Supplement
             0x0100,   // 0100..017F; Latin Extended-A
@@ -4773,7 +4792,7 @@ class Character implements java.io.Serializable, Comparable<Character> {
          */
         WARANG_CITI,
 
-         /**
+        /**
          * Unicode script "Ahom".
          * @since 9
          */
@@ -8068,7 +8087,7 @@ class Character implements java.io.Serializable, Comparable<Character> {
             UNKNOWN,                  // E01F0..10FFFF
         };
 
-        private static HashMap<String, Character.UnicodeScript> aliases;
+        private static final HashMap<String, Character.UnicodeScript> aliases;
         static {
             aliases = new HashMap<>((int)(153 / 0.75f + 1.0f));
             aliases.put("ADLM", ADLAM);
@@ -8421,8 +8440,7 @@ class Character implements java.io.Serializable, Comparable<Character> {
      * @return  a string representation of this object.
      */
     public String toString() {
-        char buf[] = {value};
-        return String.valueOf(buf);
+        return String.valueOf(value);
     }
 
     /**
@@ -8590,7 +8608,7 @@ class Character implements java.io.Serializable, Comparable<Character> {
      * values is a valid
      * <a href="http://www.unicode.org/glossary/#surrogate_pair">
      * Unicode surrogate pair</a>.
-
+     *
      * <p>This method is equivalent to the expression:
      * <blockquote><pre>{@code
      * isHighSurrogate(high) && isLowSurrogate(low)
@@ -9732,7 +9750,7 @@ class Character implements java.io.Serializable, Comparable<Character> {
     }
 
     /**
-     * Determines if the specified character (Unicode code point) is an alphabet.
+     * Determines if the specified character (Unicode code point) is alphabetic.
      * <p>
      * A character is considered to be alphabetic if its general category type,
      * provided by {@link Character#getType(int) getType(codePoint)}, is any of
@@ -10967,7 +10985,6 @@ class Character implements java.io.Serializable, Comparable<Character> {
      * Compares two {@code Character} objects numerically.
      *
      * @param   anotherCharacter   the {@code Character} to be compared.
-
      * @return  the value {@code 0} if the argument {@code Character}
      *          is equal to this {@code Character}; a value less than
      *          {@code 0} if this {@code Character} is numerically less
@@ -11074,7 +11091,7 @@ class Character implements java.io.Serializable, Comparable<Character> {
      * Note: if the specified character is not assigned a name by
      * the <i>UnicodeData</i> file (part of the Unicode Character
      * Database maintained by the Unicode Consortium), the returned
-     * name is the same as the result of expression.
+     * name is the same as the result of expression:
      *
      * <blockquote>{@code
      *     Character.UnicodeBlock.of(codePoint).toString().replace('_', ' ')
@@ -11118,7 +11135,7 @@ class Character implements java.io.Serializable, Comparable<Character> {
      * <p>
      * Note: if a character is not assigned a name by the <i>UnicodeData</i>
      * file (part of the Unicode Character Database maintained by the Unicode
-     * Consortium), its name is defined as the result of expression
+     * Consortium), its name is defined as the result of expression:
      *
      * <blockquote>{@code
      *     Character.UnicodeBlock.of(codePoint).toString().replace('_', ' ')

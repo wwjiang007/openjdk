@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -193,6 +193,10 @@ public final class Main {
     private static final DisabledAlgorithmConstraints DISABLED_CHECK =
             new DisabledAlgorithmConstraints(
                     DisabledAlgorithmConstraints.PROPERTY_CERTPATH_DISABLED_ALGS);
+
+    private static final DisabledAlgorithmConstraints LEGACY_CHECK =
+            new DisabledAlgorithmConstraints(
+                    DisabledAlgorithmConstraints.PROPERTY_SECURITY_LEGACY_ALGS);
 
     private static final Set<CryptoPrimitive> SIG_PRIMITIVE_SET = Collections
             .unmodifiableSet(EnumSet.of(CryptoPrimitive.SIGNATURE));
@@ -3320,9 +3324,13 @@ public final class Main {
 
     private String withWeak(String alg) {
         if (DISABLED_CHECK.permits(SIG_PRIMITIVE_SET, alg, null)) {
-            return alg;
+            if (LEGACY_CHECK.permits(SIG_PRIMITIVE_SET, alg, null)) {
+                return alg;
+            } else {
+                return String.format(rb.getString("with.weak"), alg);
+            }
         } else {
-            return String.format(rb.getString("with.weak"), alg);
+            return String.format(rb.getString("with.disabled"), alg);
         }
     }
 
@@ -3341,13 +3349,17 @@ public final class Main {
         int kLen = KeyUtil.getKeySize(key);
         String displayAlg = fullDisplayAlgName(key);
         if (DISABLED_CHECK.permits(SIG_PRIMITIVE_SET, key)) {
-            if (kLen >= 0) {
-                return String.format(rb.getString("key.bit"), kLen, displayAlg);
+            if (LEGACY_CHECK.permits(SIG_PRIMITIVE_SET, key)) {
+                if (kLen >= 0) {
+                    return String.format(rb.getString("key.bit"), kLen, displayAlg);
+                } else {
+                    return String.format(rb.getString("unknown.size.1"), displayAlg);
+                }
             } else {
-                return String.format(rb.getString("unknown.size.1"), displayAlg);
+                return String.format(rb.getString("key.bit.weak"), kLen, displayAlg);
             }
         } else {
-            return String.format(rb.getString("key.bit.weak"), kLen, displayAlg);
+            return String.format(rb.getString("key.bit.disabled"), kLen, displayAlg);
         }
     }
 
@@ -4193,9 +4205,10 @@ public final class Main {
      * Create a GeneralName object from known types
      * @param t one of 5 known types
      * @param v value
+     * @param exttype X.509 extension type
      * @return which one
      */
-    private GeneralName createGeneralName(String t, String v)
+    private GeneralName createGeneralName(String t, String v, int exttype)
             throws Exception {
         GeneralNameInterface gn;
         int p = oneOf(t, "EMAIL", "URI", "DNS", "IP", "OID");
@@ -4206,7 +4219,14 @@ public final class Main {
         switch (p) {
             case 0: gn = new RFC822Name(v); break;
             case 1: gn = new URIName(v); break;
-            case 2: gn = new DNSName(v); break;
+            case 2:
+                if (exttype == 3) {
+                    // Allow wildcard only for SAN extension
+                    gn = new DNSName(v, true);
+                } else {
+                    gn = new DNSName(v);
+                }
+                break;
             case 3: gn = new IPAddressName(v); break;
             default: gn = new OIDName(v); break; //4
         }
@@ -4492,7 +4512,7 @@ public final class Main {
                                 }
                                 String t = item.substring(0, colonpos);
                                 String v = item.substring(colonpos+1);
-                                gnames.add(createGeneralName(t, v));
+                                gnames.add(createGeneralName(t, v, exttype));
                             }
                             if (exttype == 3) {
                                 setExt(result, new SubjectAlternativeNameExtension(
@@ -4546,7 +4566,7 @@ public final class Main {
                                     oid = new ObjectIdentifier("1.3.6.1.5.5.7.48." + p);
                                 }
                                 accessDescriptions.add(new AccessDescription(
-                                        oid, createGeneralName(t, v)));
+                                        oid, createGeneralName(t, v, exttype)));
                             }
                             if (exttype == 5) {
                                 setExt(result, new SubjectInfoAccessExtension(accessDescriptions));
@@ -4569,7 +4589,7 @@ public final class Main {
                                 }
                                 String t = item.substring(0, colonpos);
                                 String v = item.substring(colonpos+1);
-                                gnames.add(createGeneralName(t, v));
+                                gnames.add(createGeneralName(t, v, exttype));
                             }
                             setExt(result, new CRLDistributionPointsExtension(
                                     isCritical, Collections.singletonList(
@@ -4643,18 +4663,28 @@ public final class Main {
     }
 
     private void checkWeak(String label, String sigAlg, Key key) {
-
-        if (sigAlg != null && !DISABLED_CHECK.permits(
-                SIG_PRIMITIVE_SET, sigAlg, null)) {
-            weakWarnings.add(String.format(
-                    rb.getString("whose.sigalg.risk"), label, sigAlg));
+        if (sigAlg != null) {
+            if (!DISABLED_CHECK.permits(SIG_PRIMITIVE_SET, sigAlg, null)) {
+                weakWarnings.add(String.format(
+                    rb.getString("whose.sigalg.disabled"), label, sigAlg));
+            } else if (!LEGACY_CHECK.permits(SIG_PRIMITIVE_SET, sigAlg, null)) {
+                weakWarnings.add(String.format(
+                    rb.getString("whose.sigalg.weak"), label, sigAlg));
+            }
         }
-        if (key != null && !DISABLED_CHECK.permits(SIG_PRIMITIVE_SET, key)) {
-            weakWarnings.add(String.format(
-                    rb.getString("whose.key.risk"),
-                    label,
+
+        if (key != null) {
+            if (!DISABLED_CHECK.permits(SIG_PRIMITIVE_SET, key)) {
+                weakWarnings.add(String.format(
+                    rb.getString("whose.key.disabled"), label,
                     String.format(rb.getString("key.bit"),
-                            KeyUtil.getKeySize(key), key.getAlgorithm())));
+                    KeyUtil.getKeySize(key), fullDisplayAlgName(key))));
+            } else if (!LEGACY_CHECK.permits(SIG_PRIMITIVE_SET, key)) {
+                weakWarnings.add(String.format(
+                    rb.getString("whose.key.weak"), label,
+                    String.format(rb.getString("key.bit"),
+                    KeyUtil.getKeySize(key), fullDisplayAlgName(key))));
+            }
         }
     }
 
@@ -4794,7 +4824,8 @@ public final class Main {
     }
 
     private char[] getPass(String modifier, String arg) {
-        char[] output = KeyStoreUtil.getPassWithModifier(modifier, arg, rb);
+        char[] output =
+            KeyStoreUtil.getPassWithModifier(modifier, arg, rb, collator);
         if (output != null) return output;
         tinyHelp();
         return null;    // Useless, tinyHelp() already exits.

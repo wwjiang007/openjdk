@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -74,6 +74,7 @@
 #include "utilities/elfFile.hpp"
 #include "utilities/growableArray.hpp"
 #include "utilities/macros.hpp"
+#include "utilities/powerOfTwo.hpp"
 #include "utilities/vmError.hpp"
 
 // put OS-includes here
@@ -109,6 +110,7 @@
 # include <stdint.h>
 # include <inttypes.h>
 # include <sys/ioctl.h>
+# include <linux/elf-em.h>
 
 #ifndef _GNU_SOURCE
   #define _GNU_SOURCE
@@ -717,9 +719,8 @@ void os::Linux::expand_stack_to(address bottom) {
 bool os::Linux::manually_expand_stack(JavaThread * t, address addr) {
   assert(t!=NULL, "just checking");
   assert(t->osthread()->expanding_stack(), "expand should be set");
-  assert(t->stack_base() != NULL, "stack_base was not initialized");
 
-  if (addr <  t->stack_base() && addr >= t->stack_reserved_zone_base()) {
+  if (t->is_in_usable_stack(addr)) {
     sigset_t mask_all, old_sigset;
     sigfillset(&mask_all);
     pthread_sigmask(SIG_SETMASK, &mask_all, &old_sigset);
@@ -1519,14 +1520,6 @@ void os::abort(bool dump_core, void* siginfo, const void* context) {
     if (DumpPrivateMappingsInCore) {
       ClassLoader::close_jrt_image();
     }
-#ifndef PRODUCT
-    fdStream out(defaultStream::output_fd());
-    out.print_raw("Current thread is ");
-    char buf[16];
-    jio_snprintf(buf, sizeof(buf), UINTX_FORMAT, os::current_thread_id());
-    out.print_raw_cr(buf);
-    out.print_raw_cr("Dumping core ...");
-#endif
     ::abort(); // dump core
   }
 
@@ -1845,11 +1838,11 @@ void * os::dll_load(const char *filename, char *ebuf, int ebuflen) {
     char*         name;         // String representation
   } arch_t;
 
-#ifndef EM_486
-  #define EM_486          6               /* Intel 80486 */
-#endif
 #ifndef EM_AARCH64
   #define EM_AARCH64    183               /* ARM AARCH64 */
+#endif
+#ifndef EM_RISCV
+  #define EM_RISCV      243               /* RISC-V */
 #endif
 
   static const arch_t arch_array[]={
@@ -1877,6 +1870,7 @@ void * os::dll_load(const char *filename, char *ebuf, int ebuflen) {
     {EM_PARISC,      EM_PARISC,  ELFCLASS32, ELFDATA2MSB, (char*)"PARISC"},
     {EM_68K,         EM_68K,     ELFCLASS32, ELFDATA2MSB, (char*)"M68k"},
     {EM_AARCH64,     EM_AARCH64, ELFCLASS64, ELFDATA2LSB, (char*)"AARCH64"},
+    {EM_RISCV,       EM_RISCV,   ELFCLASS64, ELFDATA2LSB, (char*)"RISC-V"},
   };
 
 #if  (defined IA32)
@@ -1911,9 +1905,11 @@ void * os::dll_load(const char *filename, char *ebuf, int ebuflen) {
   static  Elf32_Half running_arch_code=EM_68K;
 #elif  (defined SH)
   static  Elf32_Half running_arch_code=EM_SH;
+#elif  (defined RISCV)
+  static  Elf32_Half running_arch_code=EM_RISCV;
 #else
     #error Method os::dll_load requires that one of following is defined:\
-        AARCH64, ALPHA, ARM, AMD64, IA32, IA64, M68K, MIPS, MIPSEL, PARISC, __powerpc__, __powerpc64__, S390, SH, __sparc
+        AARCH64, ALPHA, ARM, AMD64, IA32, IA64, M68K, MIPS, MIPSEL, PARISC, __powerpc__, __powerpc64__, RISCV, S390, SH, __sparc
 #endif
 
   // Identify compatibility class for VM's architecture and library's architecture
@@ -2055,6 +2051,13 @@ static bool _print_ascii_file(const char* filename, outputStream* st, const char
   return true;
 }
 
+static void _print_ascii_file_h(const char* header, const char* filename, outputStream* st) {
+  st->print_cr("%s:", header);
+  if (!_print_ascii_file(filename, st)) {
+    st->print_cr("<Not Available>");
+  }
+}
+
 void os::print_dll_info(outputStream *st) {
   st->print_cr("Dynamic libraries:");
 
@@ -2078,20 +2081,18 @@ int os::get_loaded_modules_info(os::LoadedModulesCallbackFunc callback, void *pa
 
     // Read line by line from 'file'
     while (fgets(line, sizeof(line), procmapsFile) != NULL) {
-      u8 base, top, offset, inode;
-      char permissions[5];
-      char device[6];
+      u8 base, top, inode;
       char name[sizeof(line)];
 
-      // Parse fields from line
-      int matches = sscanf(line, UINT64_FORMAT_X "-" UINT64_FORMAT_X " %4s " UINT64_FORMAT_X " %5s " INT64_FORMAT " %s",
-             &base, &top, permissions, &offset, device, &inode, name);
-      // the last entry 'name' is empty for some entries, so we might have 6 matches instead of 7 for some lines
-      if (matches < 6) continue;
-      if (matches == 6) name[0] = '\0';
+      // Parse fields from line, discard perms, offset and device
+      int matches = sscanf(line, UINT64_FORMAT_X "-" UINT64_FORMAT_X " %*s %*s %*s " INT64_FORMAT " %s",
+             &base, &top, &inode, name);
+      // the last entry 'name' is empty for some entries, so we might have 3 matches instead of 4 for some lines
+      if (matches < 3) continue;
+      if (matches == 3) name[0] = '\0';
 
-      // Filter by device id '00:00' so that we only get file system mapped files.
-      if (strcmp(device, "00:00") != 0) {
+      // Filter by inode 0 so that we only get file system mapped files.
+      if (inode != 0) {
 
         // Call callback with the fields of interest
         if(callback(name, (address)base, (address)top, param)) {
@@ -2282,26 +2283,24 @@ void os::Linux::print_libversion_info(outputStream* st) {
 
 void os::Linux::print_proc_sys_info(outputStream* st) {
   st->cr();
-  st->print_cr("/proc/sys/kernel/threads-max (system-wide limit on the number of threads):");
-  _print_ascii_file("/proc/sys/kernel/threads-max", st);
-  st->cr();
-  st->cr();
-
-  st->print_cr("/proc/sys/vm/max_map_count (maximum number of memory map areas a process may have):");
-  _print_ascii_file("/proc/sys/vm/max_map_count", st);
-  st->cr();
-  st->cr();
-
-  st->print_cr("/proc/sys/kernel/pid_max (system-wide limit on number of process identifiers):");
-  _print_ascii_file("/proc/sys/kernel/pid_max", st);
-  st->cr();
-  st->cr();
+  _print_ascii_file_h("/proc/sys/kernel/threads-max (system-wide limit on the number of threads)",
+                      "/proc/sys/kernel/threads-max", st);
+  _print_ascii_file_h("/proc/sys/vm/max_map_count (maximum number of memory map areas a process may have)",
+                      "/proc/sys/vm/max_map_count", st);
+  _print_ascii_file_h("/proc/sys/kernel/pid_max (system-wide limit on number of process identifiers)",
+                      "/proc/sys/kernel/pid_max", st);
 }
 
 void os::Linux::print_full_memory_info(outputStream* st) {
-  st->print("\n/proc/meminfo:\n");
-  _print_ascii_file("/proc/meminfo", st);
+  _print_ascii_file_h("\n/proc/meminfo", "/proc/meminfo", st);
   st->cr();
+
+  // some information regarding THPs; for details see
+  // https://www.kernel.org/doc/Documentation/vm/transhuge.txt
+  _print_ascii_file_h("/sys/kernel/mm/transparent_hugepage/enabled",
+                      "/sys/kernel/mm/transparent_hugepage/enabled", st);
+  _print_ascii_file_h("/sys/kernel/mm/transparent_hugepage/defrag (defrag/compaction efforts parameter)",
+                      "/sys/kernel/mm/transparent_hugepage/defrag", st);
 }
 
 void os::Linux::print_ld_preload_file(outputStream* st) {
@@ -2486,14 +2485,60 @@ static bool print_model_name_and_flags(outputStream* st, char* buf, size_t bufle
   return false;
 }
 
+// additional information about CPU e.g. available frequency ranges
+static void print_sys_devices_cpu_info(outputStream* st, char* buf, size_t buflen) {
+  _print_ascii_file_h("Online cpus", "/sys/devices/system/cpu/online", st);
+  _print_ascii_file_h("Offline cpus", "/sys/devices/system/cpu/offline", st);
+
+  if (ExtensiveErrorReports) {
+    // cache related info (cpu 0, should be similar for other CPUs)
+    for (unsigned int i=0; i < 10; i++) { // handle max. 10 cache entries
+      char hbuf_level[60];
+      char hbuf_type[60];
+      char hbuf_size[60];
+      char hbuf_coherency_line_size[80];
+      snprintf(hbuf_level, 60, "/sys/devices/system/cpu/cpu0/cache/index%u/level", i);
+      snprintf(hbuf_type, 60, "/sys/devices/system/cpu/cpu0/cache/index%u/type", i);
+      snprintf(hbuf_size, 60, "/sys/devices/system/cpu/cpu0/cache/index%u/size", i);
+      snprintf(hbuf_coherency_line_size, 80, "/sys/devices/system/cpu/cpu0/cache/index%u/coherency_line_size", i);
+      if (file_exists(hbuf_level)) {
+        _print_ascii_file_h("cache level", hbuf_level, st);
+        _print_ascii_file_h("cache type", hbuf_type, st);
+        _print_ascii_file_h("cache size", hbuf_size, st);
+        _print_ascii_file_h("cache coherency line size", hbuf_coherency_line_size, st);
+      }
+    }
+  }
+
+  // we miss the cpufreq entries on Power and s390x
+#if defined(IA32) || defined(AMD64)
+  _print_ascii_file_h("BIOS frequency limitation", "/sys/devices/system/cpu/cpu0/cpufreq/bios_limit", st);
+  _print_ascii_file_h("Frequency switch latency (ns)", "/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_transition_latency", st);
+  _print_ascii_file_h("Available cpu frequencies", "/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_frequencies", st);
+  // min and max should be in the Available range but still print them (not all info might be available for all kernels)
+  if (ExtensiveErrorReports) {
+    _print_ascii_file_h("Maximum cpu frequency", "/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq", st);
+    _print_ascii_file_h("Minimum cpu frequency", "/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_min_freq", st);
+    _print_ascii_file_h("Current cpu frequency", "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq", st);
+  }
+  // governors are power schemes, see https://wiki.archlinux.org/index.php/CPU_frequency_scaling
+  if (ExtensiveErrorReports) {
+    _print_ascii_file_h("Available governors", "/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors", st);
+  }
+  _print_ascii_file_h("Current governor", "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor", st);
+  // Core performance boost, see https://www.kernel.org/doc/Documentation/cpu-freq/boost.txt
+  // Raise operating frequency of some cores in a multi-core package if certain conditions apply, e.g.
+  // whole chip is not fully utilized
+  _print_ascii_file_h("Core performance/turbo boost", "/sys/devices/system/cpu/cpufreq/boost", st);
+#endif
+}
+
 void os::pd_print_cpu_info(outputStream* st, char* buf, size_t buflen) {
   // Only print the model name if the platform provides this as a summary
   if (!print_model_name_and_flags(st, buf, buflen)) {
-    st->print("\n/proc/cpuinfo:\n");
-    if (!_print_ascii_file("/proc/cpuinfo", st)) {
-      st->print_cr("  <Not Available>");
-    }
+    _print_ascii_file_h("\n/proc/cpuinfo", "/proc/cpuinfo", st);
   }
+  print_sys_devices_cpu_info(st, buf, buflen);
 }
 
 #if defined(AMD64) || defined(IA32) || defined(X32)
@@ -3163,6 +3208,8 @@ bool os::Linux::libnuma_init() {
                                                   libnuma_v2_dlsym(handle, "numa_get_interleave_mask")));
       set_numa_move_pages(CAST_TO_FN_PTR(numa_move_pages_func_t,
                                          libnuma_dlsym(handle, "numa_move_pages")));
+      set_numa_set_preferred(CAST_TO_FN_PTR(numa_set_preferred_func_t,
+                                            libnuma_dlsym(handle, "numa_set_preferred")));
 
       if (numa_available() != -1) {
         set_numa_all_nodes((unsigned long*)libnuma_dlsym(handle, "numa_all_nodes"));
@@ -3298,6 +3345,7 @@ os::Linux::numa_distance_func_t os::Linux::_numa_distance;
 os::Linux::numa_get_membind_func_t os::Linux::_numa_get_membind;
 os::Linux::numa_get_interleave_mask_func_t os::Linux::_numa_get_interleave_mask;
 os::Linux::numa_move_pages_func_t os::Linux::_numa_move_pages;
+os::Linux::numa_set_preferred_func_t os::Linux::_numa_set_preferred;
 os::Linux::NumaAllocationPolicy os::Linux::_current_numa_policy;
 unsigned long* os::Linux::_numa_all_nodes;
 struct bitmask* os::Linux::_numa_all_nodes_ptr;
@@ -4129,8 +4177,8 @@ char* os::Linux::reserve_memory_special_huge_tlbfs(size_t bytes,
   }
 }
 
-char* os::reserve_memory_special(size_t bytes, size_t alignment,
-                                 char* req_addr, bool exec) {
+char* os::pd_reserve_memory_special(size_t bytes, size_t alignment,
+                                    char* req_addr, bool exec) {
   assert(UseLargePages, "only for large pages");
 
   char* addr;
@@ -4145,9 +4193,6 @@ char* os::reserve_memory_special(size_t bytes, size_t alignment,
     if (UseNUMAInterleaving) {
       numa_make_global(addr, bytes);
     }
-
-    // The memory is committed
-    MemTracker::record_virtual_memory_reserve_and_commit((address)addr, bytes, CALLER_PC);
   }
 
   return addr;
@@ -4162,22 +4207,7 @@ bool os::Linux::release_memory_special_huge_tlbfs(char* base, size_t bytes) {
   return pd_release_memory(base, bytes);
 }
 
-bool os::release_memory_special(char* base, size_t bytes) {
-  bool res;
-  if (MemTracker::tracking_level() > NMT_minimal) {
-    Tracker tkr(Tracker::release);
-    res = os::Linux::release_memory_special_impl(base, bytes);
-    if (res) {
-      tkr.record((address)base, bytes);
-    }
-
-  } else {
-    res = os::Linux::release_memory_special_impl(base, bytes);
-  }
-  return res;
-}
-
-bool os::Linux::release_memory_special_impl(char* base, size_t bytes) {
+bool os::pd_release_memory_special(char* base, size_t bytes) {
   assert(UseLargePages, "only for large pages");
   bool res;
 
@@ -4316,7 +4346,7 @@ int os::java_to_os_priority[CriticalPriority + 1] = {
 static int prio_init() {
   if (ThreadPriorityPolicy == 1) {
     if (geteuid() != 0) {
-      if (!FLAG_IS_DEFAULT(ThreadPriorityPolicy)) {
+      if (!FLAG_IS_DEFAULT(ThreadPriorityPolicy) && !FLAG_IS_JIMAGE_RESOURCE(ThreadPriorityPolicy)) {
         warning("-XX:ThreadPriorityPolicy=1 may require system level permission, " \
                 "e.g., being the root user. If the necessary permission is not " \
                 "possessed, changes to priority will be silently ignored.");
@@ -5119,12 +5149,14 @@ void os::Linux::numa_init() {
   // bitmask when externally configured to run on all or fewer nodes.
 
   if (!Linux::libnuma_init()) {
-    UseNUMA = false;
+    FLAG_SET_ERGO(UseNUMA, false);
+    FLAG_SET_ERGO(UseNUMAInterleaving, false); // Also depends on libnuma.
   } else {
     if ((Linux::numa_max_node() < 1) || Linux::is_bound_to_single_node()) {
       // If there's only one node (they start from 0) or if the process
-      // is bound explicitly to a single node using membind, disable NUMA.
-      UseNUMA = false;
+      // is bound explicitly to a single node using membind, disable NUMA unless
+      // user explicilty forces NUMA optimizations on single-node/UMA systems
+      UseNUMA = ForceNUMA;
     } else {
 
       LogTarget(Info,os) log;
@@ -5151,6 +5183,11 @@ void os::Linux::numa_init() {
     }
   }
 
+  // When NUMA requested, not-NUMA-aware allocations default to interleaving.
+  if (UseNUMA && !UseNUMAInterleaving) {
+    FLAG_SET_ERGO_IF_DEFAULT(UseNUMAInterleaving, true);
+  }
+
   if (UseParallelGC && UseNUMA && UseLargePages && !can_commit_large_page_memory()) {
     // With SHM and HugeTLBFS large pages we cannot uncommit a page, so there's no way
     // we can make the adaptive lgrp chunk resizing work. If the user specified both
@@ -5162,10 +5199,6 @@ void os::Linux::numa_init() {
       UseAdaptiveSizePolicy = false;
       UseAdaptiveNUMAChunkSizing = false;
     }
-  }
-
-  if (!UseNUMA && ForceNUMA) {
-    UseNUMA = true;
   }
 }
 
@@ -5219,7 +5252,7 @@ jint os::init_2(void) {
   log_info(os)("HotSpot is running with %s, %s",
                Linux::glibc_version(), Linux::libpthread_version());
 
-  if (UseNUMA) {
+  if (UseNUMA || UseNUMAInterleaving) {
     Linux::numa_init();
   }
 
@@ -5274,20 +5307,6 @@ jint os::init_2(void) {
   }
 
   return JNI_OK;
-}
-
-// Mark the polling page as unreadable
-void os::make_polling_page_unreadable(void) {
-  if (!guard_memory((char*)_polling_page, Linux::page_size())) {
-    fatal("Could not disable polling page");
-  }
-}
-
-// Mark the polling page as readable
-void os::make_polling_page_readable(void) {
-  if (!linux_mprotect((char *)_polling_page, Linux::page_size(), PROT_READ)) {
-    fatal("Could not enable polling page");
-  }
 }
 
 // older glibc versions don't have this macro (which expands to

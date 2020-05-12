@@ -40,6 +40,7 @@
 #include "opto/opaquenode.hpp"
 #include "opto/rootnode.hpp"
 #include "opto/subnode.hpp"
+#include "opto/subtypenode.hpp"
 #include "utilities/macros.hpp"
 
 //=============================================================================
@@ -498,9 +499,10 @@ Node *PhaseIdealLoop::convert_add_to_muladd(Node* n) {
   Node * in2 = n->in(2);
   if (in1->Opcode() == Op_MulI && in2->Opcode() == Op_MulI) {
     IdealLoopTree* loop_n = get_loop(get_ctrl(n));
-    if (loop_n->_head->as_Loop()->is_valid_counted_loop() &&
-        Matcher::match_rule_supported(Op_MulAddS2I) &&
-        Matcher::match_rule_supported(Op_MulAddVS2VI)) {
+    if (loop_n->is_counted() &&
+        loop_n->_head->as_Loop()->is_valid_counted_loop() &&
+        Matcher::match_rule_supported(Op_MulAddVS2VI) &&
+        Matcher::match_rule_supported(Op_MulAddS2I)) {
       Node* mul_in1 = in1->in(1);
       Node* mul_in2 = in1->in(2);
       Node* mul_in3 = in2->in(1);
@@ -655,6 +657,9 @@ Node *PhaseIdealLoop::conditional_move( Node *region ) {
   }
   assert(bol->Opcode() == Op_Bool, "Unexpected node");
   int cmp_op = bol->in(1)->Opcode();
+  if (cmp_op == Op_SubTypeCheck) { // SubTypeCheck expansion expects an IfNode
+    return NULL;
+  }
   // It is expensive to generate flags from a float compare.
   // Avoid duplicated float compare.
   if (phis > 1 && (cmp_op == Op_CmpF || cmp_op == Op_CmpD)) return NULL;
@@ -897,6 +902,7 @@ void PhaseIdealLoop::try_move_store_after_loop(Node* n) {
             // Move the store out of the loop if the LCA of all
             // users (except for the phi) is outside the loop.
             Node* hook = new Node(1);
+            hook->init_req(0, n_ctrl); // Add an input to prevent hook from being dead
             _igvn.rehash_node_delayed(phi);
             int count = phi->replace_edge(n, hook);
             assert(count > 0, "inconsistent phi");

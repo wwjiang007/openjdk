@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -30,10 +30,10 @@ import java.io.IOException;
 import java.io.PrintStream;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -58,6 +58,7 @@ import jdk.javadoc.doclet.Doclet;
 import jdk.javadoc.doclet.DocletEnvironment;
 import jdk.javadoc.doclet.Taglet.Location;
 import jdk.javadoc.internal.doclets.toolkit.BaseConfiguration;
+import jdk.javadoc.internal.doclets.toolkit.BaseOptions;
 import jdk.javadoc.internal.doclets.toolkit.DocletElement;
 import jdk.javadoc.internal.doclets.toolkit.Messages;
 import jdk.javadoc.internal.doclets.toolkit.Resources;
@@ -97,12 +98,12 @@ public class TagletManager {
     public static final char SIMPLE_TAGLET_OPT_SEPARATOR = ':';
 
     /**
-     * The map of all taglets.
+     * All taglets, keyed by their {@link Taglet#getName() name}.
      */
-    private final LinkedHashMap<String,Taglet> allTaglets;
+    private final LinkedHashMap<String, Taglet> allTaglets;
 
     /**
-     * Block (non-inline) taglets, grouped by Location
+     * Block (non-inline) taglets, grouped by {@link Location location}.
      */
     private Map<Location, List<Taglet>> blockTagletsByLocation;
 
@@ -136,9 +137,9 @@ public class TagletManager {
     private final Set<String> standardTagsLowercase;
 
     /**
-     * Keep track of overriden standard tags.
+     * Keep track of overridden standard tags.
      */
-    private final Set<String> overridenStandardTags;
+    private final Set<String> overriddenStandardTags;
 
     /**
      * Keep track of the tags that may conflict
@@ -177,33 +178,32 @@ public class TagletManager {
      */
     private final boolean showTaglets;
 
+    private final String tagletPath;
+
     /**
-     * Construct a new {@code TagletManager}.
-     * @param nosince true if we do not want to use @since tags.
-     * @param showversion true if we want to use @version tags.
-     * @param showauthor true if we want to use @author tags.
-     * @param javafx indicates whether javafx is active.
+     * Constructs a new {@code TagletManager}.
+     *
      * @param configuration the configuration for this taglet manager
      */
-    public TagletManager(boolean nosince, boolean showversion,
-                         boolean showauthor, boolean javafx,
-                         BaseConfiguration configuration) {
-        overridenStandardTags = new HashSet<>();
+    public TagletManager(BaseConfiguration configuration) {
+        overriddenStandardTags = new HashSet<>();
         potentiallyConflictingTags = new HashSet<>();
         standardTags = new HashSet<>();
         standardTagsLowercase = new HashSet<>();
         unseenCustomTags = new HashSet<>();
         allTaglets = new LinkedHashMap<>();
-        this.nosince = nosince;
-        this.showversion = showversion;
-        this.showauthor = showauthor;
-        this.javafx = javafx;
+        BaseOptions options = configuration.getOptions();
+        this.nosince = options.noSince();
+        this.showversion = options.showVersion();
+        this.showauthor = options.showAuthor();
+        this.javafx = options.javafx();
         this.docEnv = configuration.docEnv;
         this.doclet = configuration.doclet;
         this.messages = configuration.getMessages();
-        this.resources = configuration.getResources();
-        this.showTaglets = configuration.showTaglets;
+        this.resources = configuration.getDocResources();
+        this.showTaglets = options.showTaglets();
         this.utils = configuration.utils;
+        this.tagletPath = options.tagletPath();
         initStandardTaglets();
     }
 
@@ -229,11 +229,10 @@ public class TagletManager {
 
     /**
      * Initializes the location TAGLET_PATH which is used to locate the custom taglets.
-     * @param fileManager the filemanager to load classes and resources.
-     * @param tagletPath the path to the custom taglet.
+     * @param fileManager the file manager to load classes and resources.
      * @throws IOException if an error occurs while setting the location.
      */
-    public void initTagletPath(JavaFileManager fileManager, String tagletPath) throws IOException {
+    public void initTagletPath(JavaFileManager fileManager) throws IOException {
         if (fileManager instanceof StandardJavaFileManager) {
             StandardJavaFileManager sfm = (StandardJavaFileManager)fileManager;
             if (tagletPath != null) {
@@ -254,7 +253,7 @@ public class TagletManager {
      * Adds a new {@code Taglet}.  Print a message to indicate whether or not
      * the Taglet was registered properly.
      * @param classname  the name of the class representing the custom tag.
-     * @param fileManager the filemanager to load classes and resources.
+     * @param fileManager the file manager to load classes and resources.
      */
     public void addCustomTag(String classname, JavaFileManager fileManager) {
         try {
@@ -272,17 +271,15 @@ public class TagletManager {
 
     /**
      * Loads taglets from a taglet path using service loader.
-     * @param fileManager the filemanager to load the taglets.
+     * @param fileManager the file manager to load the taglets.
      * @throws IOException if an error occurs while getting the service loader.
      */
     public void loadTaglets(JavaFileManager fileManager) throws IOException {
-        Iterable<? extends File> location = ((StandardJavaFileManager)fileManager).getLocation(TAGLET_PATH);
+        Iterable<? extends File> location = ((StandardJavaFileManager) fileManager).getLocation(TAGLET_PATH);
         if (location != null && location.iterator().hasNext()) {
             ServiceLoader<jdk.javadoc.doclet.Taglet> serviceLoader =
                     fileManager.getServiceLoader(TAGLET_PATH, jdk.javadoc.doclet.Taglet.class);
-            Iterator<jdk.javadoc.doclet.Taglet> iterator = serviceLoader.iterator();
-            while (iterator.hasNext()) {
-                jdk.javadoc.doclet.Taglet taglet = iterator.next();
+            for (jdk.javadoc.doclet.Taglet taglet : serviceLoader) {
                 registerTaglet(taglet);
             }
         }
@@ -333,7 +330,7 @@ public class TagletManager {
      */
     private void checkTagName(String name) {
         if (standardTags.contains(name)) {
-            overridenStandardTags.add(name);
+            overriddenStandardTags.add(name);
         } else {
             if (name.indexOf('.') == -1) {
                 potentiallyConflictingTags.add(name);
@@ -368,8 +365,8 @@ public class TagletManager {
             if (name == null) {
                 continue;
             }
-            if (name.length() > 0 && name.charAt(0) == '@') {
-                name = name.substring(1, name.length());
+            if (!name.isEmpty() && name.charAt(0) == '@') {
+                name = name.substring(1);
             }
             if (! (standardTags.contains(name) || allTaglets.containsKey(name))) {
                 if (standardTagsLowercase.contains(Utils.toLowerCase(name))) {
@@ -557,7 +554,7 @@ public class TagletManager {
                 return blockTagletsByLocation.get(Location.PACKAGE);
             case OTHER:
                 if (e instanceof DocletElement) {
-                    DocletElement de = (DocletElement)e;
+                    DocletElement de = (DocletElement) e;
                     switch (de.getSubKind()) {
                         case DOCFILE:
                             return blockTagletsByLocation.get(Location.PACKAGE);
@@ -622,22 +619,22 @@ public class TagletManager {
         addStandardTaglet(new ReturnTaglet());
         addStandardTaglet(new ThrowsTaglet());
         addStandardTaglet(
-                new SimpleTaglet(EXCEPTION.tagName, null,
+                new SimpleTaglet(EXCEPTION, null,
                     EnumSet.of(Location.METHOD, Location.CONSTRUCTOR)));
         addStandardTaglet(
-                new SimpleTaglet(SINCE.tagName, resources.getText("doclet.Since"),
+                new SimpleTaglet(SINCE, resources.getText("doclet.Since"),
                     EnumSet.allOf(Location.class), !nosince));
         addStandardTaglet(
-                new SimpleTaglet(VERSION.tagName, resources.getText("doclet.Version"),
+                new SimpleTaglet(VERSION, resources.getText("doclet.Version"),
                     EnumSet.of(Location.OVERVIEW, Location.MODULE, Location.PACKAGE, Location.TYPE), showversion));
         addStandardTaglet(
-                new SimpleTaglet(AUTHOR.tagName, resources.getText("doclet.Author"),
+                new SimpleTaglet(AUTHOR, resources.getText("doclet.Author"),
                     EnumSet.of(Location.OVERVIEW, Location.MODULE, Location.PACKAGE, Location.TYPE), showauthor));
         addStandardTaglet(
-                new SimpleTaglet(SERIAL_DATA.tagName, resources.getText("doclet.SerialData"),
+                new SimpleTaglet(SERIAL_DATA, resources.getText("doclet.SerialData"),
                     EnumSet.noneOf(Location.class)));
         addStandardTaglet(
-                new SimpleTaglet(HIDDEN.tagName, null,
+                new SimpleTaglet(HIDDEN, null,
                     EnumSet.of(Location.TYPE, Location.METHOD, Location.FIELD)));
 
         // This appears to be a default custom (non-standard) taglet
@@ -660,23 +657,21 @@ public class TagletManager {
         // Keep track of the names of standard tags for error checking purposes.
         // The following are not handled above.
         addStandardTaglet(new DeprecatedTaglet());
-        addStandardTaglet(new BaseTaglet(LINK.tagName, true, EnumSet.allOf(Location.class)));
-        addStandardTaglet(new BaseTaglet(LINK_PLAIN.tagName, true, EnumSet.allOf(Location.class)));
-        addStandardTaglet(new BaseTaglet(USES.tagName, false, EnumSet.of(Location.MODULE)));
-        addStandardTaglet(new BaseTaglet(PROVIDES.tagName, false, EnumSet.of(Location.MODULE)));
+        addStandardTaglet(new BaseTaglet(LINK, true, EnumSet.allOf(Location.class)));
+        addStandardTaglet(new BaseTaglet(LINK_PLAIN, true, EnumSet.allOf(Location.class)));
+        addStandardTaglet(new BaseTaglet(USES, false, EnumSet.of(Location.MODULE)));
+        addStandardTaglet(new BaseTaglet(PROVIDES, false, EnumSet.of(Location.MODULE)));
         addStandardTaglet(
-                new SimpleTaglet(SERIAL.tagName, null,
+                new SimpleTaglet(SERIAL, null,
                     EnumSet.of(Location.PACKAGE, Location.TYPE, Location.FIELD)));
         addStandardTaglet(
-                new SimpleTaglet(SERIAL_FIELD.tagName, null, EnumSet.of(Location.FIELD)));
+                new SimpleTaglet(SERIAL_FIELD, null, EnumSet.of(Location.FIELD)));
     }
 
     /**
      * Initialize JavaFX-related tags.
      */
     private void initJavaFXTaglets() {
-        addStandardTaglet(new PropertyGetterTaglet());
-        addStandardTaglet(new PropertySetterTaglet());
         addStandardTaglet(new SimpleTaglet("propertyDescription",
                 resources.getText("doclet.PropertyDescription"),
                 EnumSet.of(Location.METHOD, Location.FIELD)));
@@ -700,16 +695,16 @@ public class TagletManager {
     /**
      * Print a list of {@link Taglet}s that might conflict with
      * standard tags in the future and a list of standard tags
-     * that have been overriden.
+     * that have been overridden.
      */
     public void printReport() {
         printReportHelper("doclet.Notice_taglet_conflict_warn", potentiallyConflictingTags);
-        printReportHelper("doclet.Notice_taglet_overriden", overridenStandardTags);
+        printReportHelper("doclet.Notice_taglet_overridden", overriddenStandardTags);
         printReportHelper("doclet.Notice_taglet_unseen", unseenCustomTags);
     }
 
     private void printReportHelper(String noticeKey, Set<String> names) {
-        if (names.size() > 0) {
+        if (!names.isEmpty()) {
             StringBuilder result = new StringBuilder();
             for (String name : names) {
                 result.append(result.length() == 0 ? " " : ", ");
@@ -733,7 +728,6 @@ public class TagletManager {
         } else {
             return allTaglets.get(name);
         }
-
     }
 
     /*
@@ -742,7 +736,7 @@ public class TagletManager {
      * a need for a corresponding update to the spec.
      */
     private void showTaglets(PrintStream out) {
-        Set<Taglet> taglets = new TreeSet<>((o1, o2) -> o1.getName().compareTo(o2.getName()));
+        Set<Taglet> taglets = new TreeSet<>(Comparator.comparing(Taglet::getName));
         taglets.addAll(allTaglets.values());
 
         for (Taglet t : taglets) {
@@ -757,7 +751,7 @@ public class TagletManager {
                     + format(t.inMethod(), "method") + " "
                     + format(t.inField(), "field") + " "
                     + format(t.isInlineTag(), "inline")+ " "
-                    + format((t instanceof SimpleTaglet) && !((SimpleTaglet)t).enabled, "disabled"));
+                    + format((t instanceof SimpleTaglet) && !((SimpleTaglet) t).enabled, "disabled"));
         }
     }
 

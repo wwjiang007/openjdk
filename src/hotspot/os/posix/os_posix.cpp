@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -176,37 +176,50 @@ void os::wait_for_keypress_at_exit(void) {
 }
 
 int os::create_file_for_heap(const char* dir) {
+  int fd;
 
-  const char name_template[] = "/jvmheap.XXXXXX";
-
-  size_t fullname_len = strlen(dir) + strlen(name_template);
-  char *fullname = (char*)os::malloc(fullname_len + 1, mtInternal);
-  if (fullname == NULL) {
-    vm_exit_during_initialization(err_msg("Malloc failed during creation of backing file for heap (%s)", os::strerror(errno)));
+#if defined(LINUX) && defined(O_TMPFILE)
+  char* native_dir = os::strdup(dir);
+  if (native_dir == NULL) {
+    vm_exit_during_initialization(err_msg("strdup failed during creation of backing file for heap (%s)", os::strerror(errno)));
     return -1;
   }
-  int n = snprintf(fullname, fullname_len + 1, "%s%s", dir, name_template);
-  assert((size_t)n == fullname_len, "Unexpected number of characters in string");
+  os::native_path(native_dir);
+  fd = os::open(dir, O_TMPFILE | O_RDWR, S_IRUSR | S_IWUSR);
+  os::free(native_dir);
 
-  os::native_path(fullname);
+  if (fd == -1)
+#endif
+  {
+    const char name_template[] = "/jvmheap.XXXXXX";
 
-  // set the file creation mask.
-  mode_t file_mode = S_IRUSR | S_IWUSR;
+    size_t fullname_len = strlen(dir) + strlen(name_template);
+    char *fullname = (char*)os::malloc(fullname_len + 1, mtInternal);
+    if (fullname == NULL) {
+      vm_exit_during_initialization(err_msg("Malloc failed during creation of backing file for heap (%s)", os::strerror(errno)));
+      return -1;
+    }
+    int n = snprintf(fullname, fullname_len + 1, "%s%s", dir, name_template);
+    assert((size_t)n == fullname_len, "Unexpected number of characters in string");
 
-  // create a new file.
-  int fd = mkstemp(fullname);
+    os::native_path(fullname);
 
-  if (fd < 0) {
-    warning("Could not create file for heap with template %s", fullname);
+    // create a new file.
+    fd = mkstemp(fullname);
+
+    if (fd < 0) {
+      warning("Could not create file for heap with template %s", fullname);
+      os::free(fullname);
+      return -1;
+    } else {
+      // delete the name from the filesystem. When 'fd' is closed, the file (and space) will be deleted.
+      int ret = unlink(fullname);
+      assert_with_errno(ret == 0, "unlink returned error");
+    }
+
     os::free(fullname);
-    return -1;
   }
 
-  // delete the name from the filesystem. When 'fd' is closed, the file (and space) will be deleted.
-  int ret = unlink(fullname);
-  assert_with_errno(ret == 0, "unlink returned error");
-
-  os::free(fullname);
   return fd;
 }
 
@@ -400,51 +413,69 @@ void os::Posix::print_uptime_info(outputStream* st) {
   }
 }
 
-
-void os::Posix::print_rlimit_info(outputStream* st) {
-  st->print("rlimit:");
+static void print_rlimit(outputStream* st, const char* msg,
+                         int resource, bool output_k = false) {
   struct rlimit rlim;
 
-  st->print(" STACK ");
-  getrlimit(RLIMIT_STACK, &rlim);
-  if (rlim.rlim_cur == RLIM_INFINITY) st->print("infinity");
-  else st->print(UINT64_FORMAT "k", uint64_t(rlim.rlim_cur) / 1024);
+  st->print(" %s ", msg);
+  int res = getrlimit(resource, &rlim);
+  if (res == -1) {
+    st->print("could not obtain value");
+  } else {
+    // soft limit
+    if (rlim.rlim_cur == RLIM_INFINITY) { st->print("infinity"); }
+    else {
+      if (output_k) { st->print(UINT64_FORMAT "k", uint64_t(rlim.rlim_cur) / 1024); }
+      else { st->print(UINT64_FORMAT, uint64_t(rlim.rlim_cur)); }
+    }
+    // hard limit
+    st->print("/");
+    if (rlim.rlim_max == RLIM_INFINITY) { st->print("infinity"); }
+    else {
+      if (output_k) { st->print(UINT64_FORMAT "k", uint64_t(rlim.rlim_max) / 1024); }
+      else { st->print(UINT64_FORMAT, uint64_t(rlim.rlim_max)); }
+    }
+  }
+}
 
-  st->print(", CORE ");
-  getrlimit(RLIMIT_CORE, &rlim);
-  if (rlim.rlim_cur == RLIM_INFINITY) st->print("infinity");
-  else st->print(UINT64_FORMAT "k", uint64_t(rlim.rlim_cur) / 1024);
+void os::Posix::print_rlimit_info(outputStream* st) {
+  st->print("rlimit (soft/hard):");
+  print_rlimit(st, "STACK", RLIMIT_STACK, true);
+  print_rlimit(st, ", CORE", RLIMIT_CORE, true);
 
-  // Isn't there on solaris
 #if defined(AIX)
   st->print(", NPROC ");
   st->print("%d", sysconf(_SC_CHILD_MAX));
+
+  print_rlimit(st, ", THREADS", RLIMIT_THREADS);
 #elif !defined(SOLARIS)
-  st->print(", NPROC ");
-  getrlimit(RLIMIT_NPROC, &rlim);
-  if (rlim.rlim_cur == RLIM_INFINITY) st->print("infinity");
-  else st->print(UINT64_FORMAT, uint64_t(rlim.rlim_cur));
+  print_rlimit(st, ", NPROC", RLIMIT_NPROC);
 #endif
 
-  st->print(", NOFILE ");
-  getrlimit(RLIMIT_NOFILE, &rlim);
-  if (rlim.rlim_cur == RLIM_INFINITY) st->print("infinity");
-  else st->print(UINT64_FORMAT, uint64_t(rlim.rlim_cur));
+  print_rlimit(st, ", NOFILE", RLIMIT_NOFILE);
+  print_rlimit(st, ", AS", RLIMIT_AS, true);
+  print_rlimit(st, ", CPU", RLIMIT_CPU);
+  print_rlimit(st, ", DATA", RLIMIT_DATA, true);
 
-  st->print(", AS ");
-  getrlimit(RLIMIT_AS, &rlim);
-  if (rlim.rlim_cur == RLIM_INFINITY) st->print("infinity");
-  else st->print(UINT64_FORMAT "k", uint64_t(rlim.rlim_cur) / 1024);
+  // maximum size of files that the process may create
+  print_rlimit(st, ", FSIZE", RLIMIT_FSIZE, true);
 
-  st->print(", DATA ");
-  getrlimit(RLIMIT_DATA, &rlim);
-  if (rlim.rlim_cur == RLIM_INFINITY) st->print("infinity");
-  else st->print(UINT64_FORMAT "k", uint64_t(rlim.rlim_cur) / 1024);
+#if defined(LINUX) || defined(__APPLE__)
+  // maximum number of bytes of memory that may be locked into RAM
+  // (rounded down to the nearest  multiple of system pagesize)
+  print_rlimit(st, ", MEMLOCK", RLIMIT_MEMLOCK, true);
+#endif
 
-  st->print(", FSIZE ");
-  getrlimit(RLIMIT_FSIZE, &rlim);
-  if (rlim.rlim_cur == RLIM_INFINITY) st->print("infinity");
-  else st->print(UINT64_FORMAT "k", uint64_t(rlim.rlim_cur) / 1024);
+#if defined(SOLARIS)
+  // maximum size of mapped address space of a process in bytes;
+  // if the limit is exceeded, mmap and brk fail
+  print_rlimit(st, ", VMEM", RLIMIT_VMEM, true);
+#endif
+
+  // MacOS; The maximum size (in bytes) to which a process's resident set size may grow.
+#if defined(__APPLE__)
+  print_rlimit(st, ", RSS", RLIMIT_RSS, true);
+#endif
 
   st->cr();
 }
@@ -659,7 +690,7 @@ void os::naked_short_nanosleep(jlong ns) {
 
 void os::naked_short_sleep(jlong ms) {
   assert(ms < MILLIUNITS, "Un-interruptable sleep, short time use only");
-  os::naked_short_nanosleep(ms * (NANOUNITS / MILLIUNITS));
+  os::naked_short_nanosleep(millis_to_nanos(ms));
   return;
 }
 
@@ -1811,18 +1842,18 @@ static void unpack_abs_time(timespec* abstime, jlong deadline, jlong now_sec) {
     abstime->tv_nsec = 0;
   } else {
     abstime->tv_sec = seconds;
-    abstime->tv_nsec = millis * (NANOUNITS / MILLIUNITS);
+    abstime->tv_nsec = millis_to_nanos(millis);
   }
 }
 
-static jlong millis_to_nanos(jlong millis) {
+static jlong millis_to_nanos_bounded(jlong millis) {
   // We have to watch for overflow when converting millis to nanos,
   // but if millis is that large then we will end up limiting to
   // MAX_SECS anyway, so just do that here.
   if (millis / MILLIUNITS > MAX_SECS) {
     millis = jlong(MAX_SECS) * MILLIUNITS;
   }
-  return millis * (NANOUNITS / MILLIUNITS);
+  return millis_to_nanos(millis);
 }
 
 static void to_abstime(timespec* abstime, jlong timeout,
@@ -1875,7 +1906,7 @@ static void to_abstime(timespec* abstime, jlong timeout,
 // Create an absolute time 'millis' milliseconds in the future, using the
 // real-time (time-of-day) clock. Used by PosixSemaphore.
 void os::Posix::to_RTC_abstime(timespec* abstime, int64_t millis) {
-  to_abstime(abstime, millis_to_nanos(millis),
+  to_abstime(abstime, millis_to_nanos_bounded(millis),
              false /* not absolute */,
              true  /* use real-time clock */);
 }
@@ -1936,7 +1967,8 @@ void os::PlatformEvent::park() {       // AKA "down()"
     while (_event < 0) {
       // OS-level "spurious wakeups" are ignored
       status = pthread_cond_wait(_cond, _mutex);
-      assert_status(status == 0, status, "cond_wait");
+      assert_status(status == 0 MACOS_ONLY(|| status == ETIMEDOUT),
+                    status, "cond_wait");
     }
     --_nParked;
 
@@ -1970,7 +2002,7 @@ int os::PlatformEvent::park(jlong millis) {
 
   if (v == 0) { // Do this the hard way by blocking ...
     struct timespec abst;
-    to_abstime(&abst, millis_to_nanos(millis), false, false);
+    to_abstime(&abst, millis_to_nanos_bounded(millis), false, false);
 
     int ret = OS_TIMEOUT;
     int status = pthread_mutex_lock(_mutex);
@@ -2127,7 +2159,8 @@ void Parker::park(bool isAbsolute, jlong time) {
   if (time == 0) {
     _cur_index = REL_INDEX; // arbitrary choice when not timed
     status = pthread_cond_wait(&_cond[_cur_index], _mutex);
-    assert_status(status == 0, status, "cond_timedwait");
+    assert_status(status == 0 MACOS_ONLY(|| status == ETIMEDOUT),
+                  status, "cond_wait");
   }
   else {
     _cur_index = isAbsolute ? ABS_INDEX : REL_INDEX;
@@ -2296,7 +2329,7 @@ int os::PlatformMonitor::wait(jlong millis) {
     if (millis / MILLIUNITS > MAX_SECS) {
       millis = jlong(MAX_SECS) * MILLIUNITS;
     }
-    to_abstime(&abst, millis * (NANOUNITS / MILLIUNITS), false, false);
+    to_abstime(&abst, millis_to_nanos(millis), false, false);
 
     int ret = OS_TIMEOUT;
     int status = pthread_cond_timedwait(cond(), mutex(), &abst);
@@ -2308,7 +2341,8 @@ int os::PlatformMonitor::wait(jlong millis) {
     return ret;
   } else {
     int status = pthread_cond_wait(cond(), mutex());
-    assert_status(status == 0, status, "cond_wait");
+    assert_status(status == 0 MACOS_ONLY(|| status == ETIMEDOUT),
+                  status, "cond_wait");
     return OS_OK;
   }
 }

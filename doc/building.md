@@ -327,10 +327,10 @@ issues.
 
  Operating system   Toolchain version
  ------------------ -------------------------------------------------------
- Linux              gcc 8.3.0
+ Linux              gcc 9.2.0
  macOS              Apple Xcode 10.1 (using clang 10.0.0)
  Solaris            Oracle Solaris Studio 12.6 (with compiler version 5.15)
- Windows            Microsoft Visual Studio 2017 update 15.9.16
+ Windows            Microsoft Visual Studio 2019 update 16.5.3
 
 All compilers are expected to be able to compile to the C99 language standard,
 as some C99 features are used in the source code. Microsoft Visual Studio
@@ -339,10 +339,10 @@ features that it does support.
 
 ### gcc
 
-The minimum accepted version of gcc is 4.8. Older versions will generate a warning
+The minimum accepted version of gcc is 5.0. Older versions will generate a warning
 by `configure` and are unlikely to work.
 
-The JDK is currently known to be able to compile with at least version 8.3 of
+The JDK is currently known to be able to compile with at least version 9.2 of
 gcc.
 
 In general, any version between these two should be usable.
@@ -684,11 +684,14 @@ features, use `bash configure --help=short` instead.)
     (or variants) of Hotspot. Valid variants are: `server`, `client`,
     `minimal`, `core`, `zero`, `custom`. Note that not all
     variants are possible to combine in a single build.
-  * `--with-jvm-features=<feature>[,<feature>...]` - Use the specified JVM
-    features when building Hotspot. The list of features will be enabled on top
-    of the default list. For the `custom` JVM variant, this default list is
-    empty. A complete list of available JVM features can be found using `bash
-    configure --help`.
+  * `--enable-jvm-feature-<feature>` or `--disable-jvm-feature-<feature>` -
+    Include (or exclude) `<feature>` as a JVM feature in Hotspot. You can also
+    specify a list of features to be enabled, separated by space or comma, as
+    `--with-jvm-features=<feature>[,<feature>...]`. If you prefix `<feature>`
+    with a `-`, it will be disabled. These options will modify the default list
+    of features for the JVM variant(s) you are building. For the `custom` JVM
+    variant, the default list is empty. A complete list of valid JVM features
+    can be found using `bash configure --help`.
   * `--with-target-bits=<bits>` - Create a target binary suitable for running
     on a `<bits>` platform. Use this to create 32-bit output on a 64-bit build
     platform, instead of doing a full cross-compile. (This is known as a
@@ -815,7 +818,7 @@ control variables.
 It is possible to build just a single module, a single phase, or a single phase
 of a single module, by creating make targets according to these followin
 patterns. A phase can be either of `gensrc`, `gendata`, `copy`, `java`,
-`launchers`, `libs` or `rmic`. See [Using Fine-Grained Make Targets](
+`launchers`, or `libs`. See [Using Fine-Grained Make Targets](
 #using-fine-grained-make-targets) for more details about this functionality.
 
   * `<phase>` - Build the specified phase and everything it depends on
@@ -888,7 +891,7 @@ containing `lib/jtreg.jar` etc.
 
 The [Adoption Group](https://wiki.openjdk.java.net/display/Adoption) provides
 recent builds of jtreg [here](
-https://adopt-openjdk.ci.cloudbees.com/job/jtreg/lastSuccessfulBuild/artifact).
+https://ci.adoptopenjdk.net/view/Dependencies/job/jtreg/lastSuccessfulBuild/artifact).
 Download the latest `.tar.gz` file, unpack it, and point `--with-jtreg` to the
 `jtreg` directory that you just unpacked.
 
@@ -1037,14 +1040,6 @@ appending the directory when searching for cross-compilations tools
 (`--with-toolchain-path`). As a compact form, you can also use `--with-devkit`
 to point to a single directory, if it is correctly setup. (See `basics.m4` for
 details.)
-
-If you are unsure what toolchain and versions to use, these have been proved
-working at the time of writing:
-
-  * [aarch64](
-https://releases.linaro.org/archive/13.11/components/toolchain/binaries/gcc-linaro-aarch64-linux-gnu-4.8-2013.11_linux.tar.xz)
-  * [arm 32-bit hardware floating  point](
-https://launchpad.net/linaro-toolchain-unsupported/trunk/2012.09/+download/gcc-linaro-arm-linux-gnueabihf-raspbian-2012.09-20120921_linux.tar.bz2)
 
 ### Native Libraries
 
@@ -1624,7 +1619,6 @@ and other artifact the module consists of. The phases are:
   * `java` (Compile Java code)
   * `launchers` (Compile native executables)
   * `libs` (Compile native libraries)
-  * `rmic` (Run the `rmic` tool)
 
 You can build only a single phase for a module by using the notation
 `$MODULE-$PHASE`. For instance, to build the `gensrc` phase for `java.base`,

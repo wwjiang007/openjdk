@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2019, Red Hat, Inc. All rights reserved.
+ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 only, as
@@ -28,10 +29,29 @@
 
 class ShenandoahHeuristics;
 
+#define SHENANDOAH_CHECK_FLAG_SET(name)                                     \
+  do {                                                                      \
+    if (!(name)) {                                                          \
+      err_msg message("GC mode needs -XX:+" #name " to work correctly");    \
+      vm_exit_during_initialization("Error", message);                      \
+    }                                                                       \
+  } while (0)
+
+#define SHENANDOAH_CHECK_FLAG_UNSET(name)                                   \
+  do {                                                                      \
+    if ((name)) {                                                           \
+      err_msg message("GC mode needs -XX:-" #name " to work correctly");    \
+      vm_exit_during_initialization("Error", message);                      \
+    }                                                                       \
+  } while (0)
+
 class ShenandoahMode : public CHeapObj<mtGC> {
 public:
   virtual void initialize_flags() const = 0;
   virtual ShenandoahHeuristics* initialize_heuristics() const = 0;
+  virtual const char* name() = 0;
+  virtual bool is_diagnostic() = 0;
+  virtual bool is_experimental() = 0;
 };
 
 #endif // SHARE_GC_SHENANDOAH_SHENANDOAHMODE_HPP

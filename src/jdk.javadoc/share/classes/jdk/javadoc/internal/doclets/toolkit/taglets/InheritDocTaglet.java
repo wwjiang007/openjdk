@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -39,11 +39,9 @@ import jdk.javadoc.internal.doclets.toolkit.util.DocFinder;
 import jdk.javadoc.internal.doclets.toolkit.util.DocFinder.Input;
 import jdk.javadoc.internal.doclets.toolkit.util.Utils;
 
-import static com.sun.source.doctree.DocTree.Kind.INHERIT_DOC;
-
 /**
  * An inline Taglet representing the {@code inheritDoc} tag. This tag should only
- * be used with a method.  It is used to inherit documentation from overriden
+ * be used with a method.  It is used to inherit documentation from overridden
  * and implemented methods.
  *
  *  <p><b>This is NOT part of any supported API.
@@ -58,7 +56,7 @@ public class InheritDocTaglet extends BaseTaglet {
      * Construct a new InheritDocTaglet.
      */
     public InheritDocTaglet () {
-        super(INHERIT_DOC.tagName, true, EnumSet.of(Location.TYPE, Location.METHOD));
+        super(DocTree.Kind.INHERIT_DOC, true, EnumSet.of(Location.TYPE, Location.METHOD));
     }
 
     /**
@@ -86,7 +84,7 @@ public class InheritDocTaglet extends BaseTaglet {
             !(inheritableTaglet instanceof InheritableTaglet)) {
                 String message = utils.getSimpleName(e) +
                     ((utils.isExecutableElement(e))
-                        ? utils.flatSignature((ExecutableElement)e)
+                        ? utils.flatSignature((ExecutableElement)e, writer.getCurrentPageElement())
                         : "");
                 //This tag does not support inheritance.
                 messages.warning(e, "doclet.noInheritedDoc", message);
@@ -105,7 +103,7 @@ public class InheritDocTaglet extends BaseTaglet {
         } else {
             String message = utils.getSimpleName(e) +
                     ((utils.isExecutableElement(e))
-                        ? utils.flatSignature((ExecutableElement)e)
+                        ? utils.flatSignature((ExecutableElement)e, writer.getCurrentPageElement())
                         : "");
             messages.warning(e, "doclet.noInheritedDoc", message);
         }
@@ -114,7 +112,7 @@ public class InheritDocTaglet extends BaseTaglet {
 
     @Override
     public Content getTagletOutput(Element e, DocTree tag, TagletWriter tagletWriter) {
-        DocTree inheritTag = (tag.getKind() == INHERIT_DOC) ? null : tag;
+        DocTree inheritTag = (tag.getKind() == DocTree.Kind.INHERIT_DOC) ? null : tag;
         return retrieveInheritedDocumentation(tagletWriter, e,
                 inheritTag, tagletWriter.isFirstSentence);
     }

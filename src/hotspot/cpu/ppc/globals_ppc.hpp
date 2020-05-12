@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2002, 2019, Oracle and/or its affiliates. All rights reserved.
- * Copyright (c) 2012, 2018 SAP SE. All rights reserved.
+ * Copyright (c) 2002, 2020, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2012, 2020 SAP SE. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -81,8 +81,7 @@ define_pd_global(intx, InitArrayShortSize, 9*BytesPerLong);
                    experimental, \
                    notproduct,   \
                    range,        \
-                   constraint,   \
-                   writeable)    \
+                   constraint)   \
                                                                             \
   product(uintx, PowerArchitecturePPC64, 0,                                 \
           "CPU Version: x for PowerX. Currently recognizes Power5 to "      \
@@ -113,6 +112,8 @@ define_pd_global(intx, InitArrayShortSize, 9*BytesPerLong);
           "Use load instructions for stack banging.")                       \
                                                                             \
   /* special instructions */                                                \
+  product(bool, UseVectorByteReverseInstructionsPPC64, false,               \
+          "Use Power9 xxbr* vector byte reverse instructions.")             \
                                                                             \
   product(bool, UseCountLeadingZerosInstructionsPPC64, true,                \
           "Use count leading zeros instructions.")                          \

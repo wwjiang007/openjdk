@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2016, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2016, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -47,6 +47,7 @@
 #include "runtime/safepointVerifiers.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/vmOperations.hpp"
+#include "utilities/powerOfTwo.hpp"
 #include "utilities/sizes.hpp"
 
 bool AOTLib::_narrow_oop_shift_initialized = false;
@@ -181,8 +182,6 @@ void AOTLib::verify_config() {
   verify_flag(_config->_useBiasedLocking, UseBiasedLocking, "UseBiasedLocking");
   verify_flag(_config->_objectAlignment, ObjectAlignmentInBytes, "ObjectAlignmentInBytes");
   verify_flag(_config->_contendedPaddingWidth, ContendedPaddingWidth, "ContendedPaddingWidth");
-  verify_flag(_config->_fieldsAllocationStyle, FieldsAllocationStyle, "FieldsAllocationStyle");
-  verify_flag(_config->_compactFields, CompactFields, "CompactFields");
   verify_flag(_config->_enableContended, EnableContended, "EnableContended");
   verify_flag(_config->_restrictContended, RestrictContended, "RestrictContended");
 
@@ -465,6 +464,7 @@ void AOTCodeHeap::link_shared_runtime_symbols() {
     SET_AOT_GLOBAL_SYMBOL_VALUE("_resolve_virtual_entry", address, SharedRuntime::get_resolve_virtual_call_stub());
     SET_AOT_GLOBAL_SYMBOL_VALUE("_resolve_opt_virtual_entry", address, SharedRuntime::get_resolve_opt_virtual_call_stub());
     SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_deopt_blob_unpack", address, SharedRuntime::deopt_blob()->unpack());
+    SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_deopt_blob_unpack_with_exception_in_tls", address, SharedRuntime::deopt_blob()->unpack_with_exception_in_tls());
     SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_deopt_blob_uncommon_trap", address, SharedRuntime::deopt_blob()->uncommon_trap());
     SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_ic_miss_stub", address, SharedRuntime::get_ic_miss_stub());
     SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_handle_wrong_method_stub", address, SharedRuntime::get_handle_wrong_method_stub());
@@ -555,6 +555,8 @@ void AOTCodeHeap::link_stub_routines_symbols() {
     SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_stub_routines_montgomeryMultiply",  address, StubRoutines::_montgomeryMultiply);
     SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_stub_routines_montgomerySquare", address, StubRoutines::_montgomerySquare);
     SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_stub_routines_vectorizedMismatch", address, StubRoutines::_vectorizedMismatch);
+    SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_stub_routines_bigIntegerRightShiftWorker", address, StubRoutines::_bigIntegerRightShiftWorker);
+    SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_stub_routines_bigIntegerLeftShiftWorker", address, StubRoutines::_bigIntegerLeftShiftWorker);
 
     SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_stub_routines_throw_delayed_StackOverflowError_entry", address, StubRoutines::_throw_delayed_StackOverflowError_entry);
 
@@ -578,7 +580,6 @@ void AOTCodeHeap::link_global_lib_symbols() {
     SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_card_table_address", address, (BarrierSet::barrier_set()->is_a(BarrierSet::CardTableBarrierSet) ? ci_card_table_address() : NULL));
     SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_heap_top_address", address, (heap->supports_inline_contig_alloc() ? heap->top_addr() : NULL));
     SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_heap_end_address", address, (heap->supports_inline_contig_alloc() ? heap->end_addr() : NULL));
-    SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_polling_page", address, os::get_polling_page());
     SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_narrow_klass_base_address", address, CompressedKlassPointers::base());
     SET_AOT_GLOBAL_SYMBOL_VALUE("_aot_narrow_oop_base_address", address, CompressedOops::base());
 #if INCLUDE_G1GC
@@ -1048,7 +1049,7 @@ bool AOTCodeHeap::reconcile_dynamic_klass(AOTCompiledMethod *caller, InstanceKla
 
   InstanceKlass* dyno = InstanceKlass::cast(dyno_klass);
 
-  if (!dyno->is_unsafe_anonymous()) {
+  if (!dyno->is_hidden() && !dyno->is_unsafe_anonymous()) {
     if (_klasses_got[dyno_data->_got_index] != dyno) {
       // compile-time class different from runtime class, fail and deoptimize
       sweep_dependent_methods(holder_data);

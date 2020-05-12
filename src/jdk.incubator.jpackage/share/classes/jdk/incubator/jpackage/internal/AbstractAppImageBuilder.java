@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2015, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,23 +25,21 @@
 
 package jdk.incubator.jpackage.internal;
 
-import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.text.MessageFormat;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.ResourceBundle;
-import java.util.ArrayList;
+import static jdk.incubator.jpackage.internal.OverridableResource.createResource;
+import static jdk.incubator.jpackage.internal.StandardBundlerParam.*;
 
 import jdk.incubator.jpackage.internal.resources.ResourceLocator;
 
-import static jdk.incubator.jpackage.internal.StandardBundlerParam.*;
 
 /*
  * AbstractAppImageBuilder
@@ -122,12 +120,11 @@ public abstract class AbstractAppImageBuilder {
                 // legacy way and the main class string must be
                 // of the format com/foo/Main
                 if (mainJar != null) {
-                    out.println("app.mainjar=" + getCfgAppDir()
+                    out.println("app.classpath=" + getCfgAppDir()
                             + mainJar.toPath().getFileName().toString());
                 }
                 if (mainClass != null) {
-                    out.println("app.mainclass="
-                            + mainClass.replace("\\", "/"));
+                    out.println("app.mainclass=" + mainClass);
                 }
             }
 
@@ -135,26 +132,20 @@ public abstract class AbstractAppImageBuilder {
             out.println("[JavaOptions]");
             List<String> jvmargs = JAVA_OPTIONS.fetchFrom(params);
             for (String arg : jvmargs) {
-                out.println(arg);
+                out.println("java-options=" + arg);
             }
             Path modsDir = getAppModsDir();
 
             if (modsDir != null && modsDir.toFile().exists()) {
-                out.println("--module-path");
-                out.println(getCfgAppDir().replace("\\","/") + "mods");
+                out.println("java-options=" + "--module-path");
+                out.println("java-options=" + getCfgAppDir().replace("\\","/") + "mods");
             }
 
             out.println();
             out.println("[ArgOptions]");
             List<String> args = ARGUMENTS.fetchFrom(params);
             for (String arg : args) {
-                if (arg.endsWith("=") &&
-                        (arg.indexOf("=") == arg.lastIndexOf("="))) {
-                    out.print(arg.substring(0, arg.length() - 1));
-                    out.println("\\=");
-                } else {
-                    out.println(arg);
-                }
+                out.println("arguments=" + arg);
             }
         }
     }
@@ -187,5 +178,58 @@ public abstract class AbstractAppImageBuilder {
             sb.deleteCharAt(sb.length() - 1);
         }
         return sb.toString();
+    }
+
+    public static OverridableResource createIconResource(String defaultIconName,
+            BundlerParamInfo<File> iconParam, Map<String, ? super Object> params,
+            Map<String, ? super Object> mainParams) throws IOException {
+
+        if (mainParams != null) {
+            params = AddLauncherArguments.merge(mainParams, params, ICON.getID(),
+                    iconParam.getID());
+        }
+
+        final String resourcePublicName = APP_NAME.fetchFrom(params)
+                + IOUtils.getSuffix(Path.of(defaultIconName));
+
+        IconType iconType = getLauncherIconType(params);
+        if (iconType == IconType.NoIcon) {
+            return null;
+        }
+
+        OverridableResource resource = createResource(defaultIconName, params)
+                .setCategory("icon")
+                .setExternal(iconParam.fetchFrom(params))
+                .setPublicName(resourcePublicName);
+
+        if (iconType == IconType.DefaultOrResourceDirIcon && mainParams != null) {
+            // No icon explicitly configured for this launcher.
+            // Dry-run resource creation to figure out its source.
+            final Path nullPath = null;
+            if (resource.saveToFile(nullPath)
+                    != OverridableResource.Source.ResourceDir) {
+                // No icon in resource dir for this launcher, inherit icon
+                // configured for the main launcher.
+                resource = createIconResource(defaultIconName, iconParam,
+                        mainParams, null).setLogPublicName(resourcePublicName);
+            }
+        }
+
+        return resource;
+    }
+
+    private enum IconType { DefaultOrResourceDirIcon, CustomIcon, NoIcon };
+
+    private static IconType getLauncherIconType(Map<String, ? super Object> params) {
+        File launcherIcon = ICON.fetchFrom(params);
+        if (launcherIcon == null) {
+            return IconType.DefaultOrResourceDirIcon;
+        }
+
+        if (launcherIcon.getName().isEmpty()) {
+            return IconType.NoIcon;
+        }
+
+        return IconType.CustomIcon;
     }
 }

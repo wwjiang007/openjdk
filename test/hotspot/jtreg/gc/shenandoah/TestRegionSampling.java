@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2017, 2018, Red Hat, Inc. All rights reserved.
+ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 only, as
@@ -62,11 +63,11 @@
  * @requires vm.gc.Shenandoah & !vm.graal.enabled
  *
  * @run main/othervm -Xmx1g -Xms1g -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions -XX:+ShenandoahRegionSampling
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=traversal -XX:ShenandoahGCHeuristics=aggressive
+ *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu -XX:ShenandoahGCHeuristics=aggressive
  *      TestRegionSampling
  *
  * @run main/othervm -Xmx1g -Xms1g -XX:+UnlockDiagnosticVMOptions -XX:+UnlockExperimentalVMOptions -XX:+ShenandoahRegionSampling
- *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=traversal
+ *      -XX:+UseShenandoahGC -XX:ShenandoahGCMode=iu
  *      TestRegionSampling
  *
  */

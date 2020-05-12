@@ -992,6 +992,10 @@ convertSignatureToClassname(char *convert)
         char c = *p;
         if (c == '/') {
             *(p-1) = '.';
+        } else if (c == '.') {
+            // class signature of a hidden class is "Ljava/lang/Foo.1234;"
+            // map to "java.lang.Foo/1234"
+            *(p-1) = '/';
         } else {
             *(p-1) = c;
         }
@@ -1742,7 +1746,7 @@ isMethodObsolete(jmethodID method)
 }
 
 /* Get the jvmti environment to be used with tags */
-static jvmtiEnv *
+jvmtiEnv *
 getSpecialJvmti(void)
 {
     jvmtiEnv  *jvmti;

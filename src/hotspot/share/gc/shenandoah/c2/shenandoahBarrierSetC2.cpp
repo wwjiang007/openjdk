@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018, 2019, Red Hat, Inc. All rights reserved.
+ * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License version 2 only, as
@@ -480,16 +481,16 @@ const TypeFunc* ShenandoahBarrierSetC2::shenandoah_clone_barrier_Type() {
   return TypeFunc::make(domain, range);
 }
 
-const TypeFunc* ShenandoahBarrierSetC2::shenandoah_load_reference_barrier_Type() {
+const TypeFunc* ShenandoahBarrierSetC2::shenandoah_load_reference_barrier_Type(const Type* value_type) {
   const Type **fields = TypeTuple::fields(2);
-  fields[TypeFunc::Parms+0] = TypeInstPtr::NOTNULL; // original field value
+  fields[TypeFunc::Parms+0] = value_type;           // original field value
   fields[TypeFunc::Parms+1] = TypeRawPtr::BOTTOM;   // original load address
 
   const TypeTuple *domain = TypeTuple::make(TypeFunc::Parms+2, fields);
 
   // create result type (range)
   fields = TypeTuple::fields(1);
-  fields[TypeFunc::Parms+0] = TypeInstPtr::NOTNULL;
+  fields[TypeFunc::Parms+0] = value_type;
   const TypeTuple *range = TypeTuple::make(TypeFunc::Parms+1, fields);
 
   return TypeFunc::make(domain, range);
@@ -565,8 +566,7 @@ Node* ShenandoahBarrierSetC2::load_at_resolved(C2Access& access, const Type* val
 
     bool unknown = (decorators & ON_UNKNOWN_OOP_REF) != 0;
     bool on_weak_ref = (decorators & (ON_WEAK_OOP_REF | ON_PHANTOM_OOP_REF)) != 0;
-    bool is_traversal_mode = ShenandoahHeap::heap()->is_traversal_mode();
-    bool keep_alive = (decorators & AS_NO_KEEPALIVE) == 0 || is_traversal_mode;
+    bool keep_alive = (decorators & AS_NO_KEEPALIVE) == 0;
 
     // If we are reading the value of the referent field of a Reference
     // object (either by using Unsafe directly or through reflection)
@@ -739,6 +739,9 @@ bool ShenandoahBarrierSetC2::is_gc_barrier_node(Node* node) const {
 }
 
 Node* ShenandoahBarrierSetC2::step_over_gc_barrier(Node* c) const {
+  if (c == NULL) {
+    return c;
+  }
   if (c->Opcode() == Op_ShenandoahLoadReferenceBarrier) {
     return c->in(ShenandoahLoadReferenceBarrierNode::ValueIn);
   }
@@ -771,7 +774,7 @@ bool ShenandoahBarrierSetC2::array_copy_requires_gc_barriers(bool tightly_couple
   if (!is_oop) {
     return false;
   }
-  if (tightly_coupled_alloc) {
+  if (ShenandoahSATBBarrier && tightly_coupled_alloc) {
     if (phase == Optimization) {
       return false;
     }
@@ -812,14 +815,14 @@ bool ShenandoahBarrierSetC2::clone_needs_barrier(Node* src, PhaseGVN& gvn) {
 void ShenandoahBarrierSetC2::clone_at_expansion(PhaseMacroExpand* phase, ArrayCopyNode* ac) const {
   Node* ctrl = ac->in(TypeFunc::Control);
   Node* mem = ac->in(TypeFunc::Memory);
-  Node* src = ac->in(ArrayCopyNode::Src);
+  Node* src_base = ac->in(ArrayCopyNode::Src);
   Node* src_offset = ac->in(ArrayCopyNode::SrcPos);
-  Node* dest = ac->in(ArrayCopyNode::Dest);
+  Node* dest_base = ac->in(ArrayCopyNode::Dest);
   Node* dest_offset = ac->in(ArrayCopyNode::DestPos);
   Node* length = ac->in(ArrayCopyNode::Length);
-  assert (src_offset == NULL && dest_offset == NULL, "for clone offsets should be null");
-  assert (src->is_AddP(), "for clone the src should be the interior ptr");
-  assert (dest->is_AddP(), "for clone the dst should be the interior ptr");
+
+  Node* src = phase->basic_plus_adr(src_base, src_offset);
+  Node* dest = phase->basic_plus_adr(dest_base, dest_offset);
 
   if (ShenandoahCloneBarrier && clone_needs_barrier(src, phase->igvn())) {
     // Check if heap is has forwarded objects. If it does, we need to call into the special
@@ -838,7 +841,11 @@ void ShenandoahBarrierSetC2::clone_at_expansion(PhaseMacroExpand* phase, ArrayCo
     debug_only(gc_state_adr_type = phase->C->get_adr_type(gc_state_idx));
 
     Node* gc_state    = phase->transform_later(new LoadBNode(ctrl, mem, gc_state_addr, gc_state_adr_type, TypeInt::BYTE, MemNode::unordered));
-    Node* stable_and  = phase->transform_later(new AndINode(gc_state, phase->igvn().intcon(ShenandoahHeap::HAS_FORWARDED)));
+    int flags = ShenandoahHeap::HAS_FORWARDED;
+    if (ShenandoahStoreValEnqueueBarrier) {
+      flags |= ShenandoahHeap::MARKING;
+    }
+    Node* stable_and  = phase->transform_later(new AndINode(gc_state, phase->igvn().intcon(flags)));
     Node* stable_cmp  = phase->transform_later(new CmpINode(stable_and, phase->igvn().zerocon(T_INT)));
     Node* stable_test = phase->transform_later(new BoolNode(stable_cmp, BoolTest::ne));
 
@@ -856,7 +863,7 @@ void ShenandoahBarrierSetC2::clone_at_expansion(PhaseMacroExpand* phase, ArrayCo
                     CAST_FROM_FN_PTR(address, ShenandoahRuntime::shenandoah_clone_barrier),
                     "shenandoah_clone",
                     TypeRawPtr::BOTTOM,
-                    src->in(AddPNode::Base));
+                    src_base);
     call = phase->transform_later(call);
 
     ctrl = phase->transform_later(new ProjNode(call, TypeFunc::Control));
@@ -1052,37 +1059,10 @@ Node* ShenandoahBarrierSetC2::ideal_node(PhaseGVN* phase, Node* n, bool can_resh
       }
     }
   }
-  if (n->Opcode() == Op_CmpP) {
-    Node* in1 = n->in(1);
-    Node* in2 = n->in(2);
-    if (in1->bottom_type() == TypePtr::NULL_PTR) {
-      in2 = step_over_gc_barrier(in2);
-    }
-    if (in2->bottom_type() == TypePtr::NULL_PTR) {
-      in1 = step_over_gc_barrier(in1);
-    }
-    PhaseIterGVN* igvn = phase->is_IterGVN();
-    if (in1 != n->in(1)) {
-      if (igvn != NULL) {
-        n->set_req_X(1, in1, igvn);
-      } else {
-        n->set_req(1, in1);
-      }
-      assert(in2 == n->in(2), "only one change");
-      return n;
-    }
-    if (in2 != n->in(2)) {
-      if (igvn != NULL) {
-        n->set_req_X(2, in2, igvn);
-      } else {
-        n->set_req(2, in2);
-      }
-      return n;
-    }
-  } else if (can_reshape &&
-             n->Opcode() == Op_If &&
-             ShenandoahBarrierC2Support::is_heap_stable_test(n) &&
-             n->in(0) != NULL) {
+  if (can_reshape &&
+      n->Opcode() == Op_If &&
+      ShenandoahBarrierC2Support::is_heap_stable_test(n) &&
+      n->in(0) != NULL) {
     Node* dom = n->in(0);
     Node* prev_dom = n;
     int op = n->Opcode();

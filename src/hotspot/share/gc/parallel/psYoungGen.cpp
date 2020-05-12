@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -25,7 +25,6 @@
 #include "precompiled.hpp"
 #include "gc/parallel/mutableNUMASpace.hpp"
 #include "gc/parallel/parallelScavengeHeap.hpp"
-#include "gc/parallel/psMarkSweepDecorator.hpp"
 #include "gc/parallel/psScavenge.hpp"
 #include "gc/parallel/psYoungGen.hpp"
 #include "gc/shared/gcUtil.hpp"
@@ -36,15 +35,12 @@
 #include "runtime/java.hpp"
 #include "utilities/align.hpp"
 
-PSYoungGen::PSYoungGen(size_t initial_size, size_t min_size, size_t max_size) :
+PSYoungGen::PSYoungGen(ReservedSpace rs, size_t initial_size, size_t min_size, size_t max_size) :
   _reserved(),
   _virtual_space(NULL),
   _eden_space(NULL),
   _from_space(NULL),
   _to_space(NULL),
-  _eden_mark_sweep(NULL),
-  _from_mark_sweep(NULL),
-  _to_mark_sweep(NULL),
   _init_gen_size(initial_size),
   _min_gen_size(min_size),
   _max_gen_size(max_size),
@@ -52,7 +48,9 @@ PSYoungGen::PSYoungGen(size_t initial_size, size_t min_size, size_t max_size) :
   _eden_counters(NULL),
   _from_counters(NULL),
   _to_counters(NULL)
-{}
+{
+  initialize(rs, GenAlignment);
+}
 
 void PSYoungGen::initialize_virtual_space(ReservedSpace rs, size_t alignment) {
   assert(_init_gen_size != 0, "Should have a finite size");
@@ -91,25 +89,6 @@ void PSYoungGen::initialize_work() {
   }
   _from_space = new MutableSpace(virtual_space()->alignment());
   _to_space   = new MutableSpace(virtual_space()->alignment());
-
-  if (_eden_space == NULL || _from_space == NULL || _to_space == NULL) {
-    vm_exit_during_initialization("Could not allocate a young gen space");
-  }
-
-  // Allocate the mark sweep views of spaces
-  _eden_mark_sweep =
-      new PSMarkSweepDecorator(_eden_space, NULL, MarkSweepDeadRatio);
-  _from_mark_sweep =
-      new PSMarkSweepDecorator(_from_space, NULL, MarkSweepDeadRatio);
-  _to_mark_sweep =
-      new PSMarkSweepDecorator(_to_space, NULL, MarkSweepDeadRatio);
-
-  if (_eden_mark_sweep == NULL ||
-      _from_mark_sweep == NULL ||
-      _to_mark_sweep == NULL) {
-    vm_exit_during_initialization("Could not complete allocation"
-                                  " of the young generation");
-  }
 
   // Generation Counters - generation 0, 3 subspaces
   _gen_counters = new PSGenerationCounters("new", 0, 3, _min_gen_size,
@@ -681,14 +660,6 @@ void PSYoungGen::swap_spaces() {
   MutableSpace* s    = from_space();
   _from_space        = to_space();
   _to_space          = s;
-
-  // Now update the decorators.
-  PSMarkSweepDecorator* md = from_mark_sweep();
-  _from_mark_sweep           = to_mark_sweep();
-  _to_mark_sweep             = md;
-
-  assert(from_mark_sweep()->space() == from_space(), "Sanity");
-  assert(to_mark_sweep()->space() == to_space(), "Sanity");
 }
 
 size_t PSYoungGen::capacity_in_bytes() const {
@@ -731,29 +702,6 @@ void PSYoungGen::object_iterate(ObjectClosure* blk) {
   to_space()->object_iterate(blk);
 }
 
-#if INCLUDE_SERIALGC
-
-void PSYoungGen::precompact() {
-  eden_mark_sweep()->precompact();
-  from_mark_sweep()->precompact();
-  to_mark_sweep()->precompact();
-}
-
-void PSYoungGen::adjust_pointers() {
-  eden_mark_sweep()->adjust_pointers();
-  from_mark_sweep()->adjust_pointers();
-  to_mark_sweep()->adjust_pointers();
-}
-
-void PSYoungGen::compact() {
-  eden_mark_sweep()->compact(ZapUnusedHeapArea);
-  from_mark_sweep()->compact(ZapUnusedHeapArea);
-  // Mark sweep stores preserved markWords in to space, don't disturb!
-  to_mark_sweep()->compact(false);
-}
-
-#endif // INCLUDE_SERIALGC
-
 void PSYoungGen::print() const { print_on(tty); }
 void PSYoungGen::print_on(outputStream* st) const {
   st->print(" %-15s", "PSYoungGen");
@@ -763,16 +711,6 @@ void PSYoungGen::print_on(outputStream* st) const {
   st->print("  eden"); eden_space()->print_on(st);
   st->print("  from"); from_space()->print_on(st);
   st->print("  to  "); to_space()->print_on(st);
-}
-
-size_t PSYoungGen::available_for_expansion() {
-  ShouldNotReachHere();
-  return 0;
-}
-
-size_t PSYoungGen::available_for_contraction() {
-  ShouldNotReachHere();
-  return 0;
 }
 
 size_t PSYoungGen::available_to_min_gen() {
@@ -825,10 +763,6 @@ size_t PSYoungGen::limit_gen_shrink(size_t bytes) {
   // to maintain the minimum young gen size
   bytes = MIN3(bytes, available_to_min_gen(), available_to_live());
   return align_down(bytes, virtual_space()->alignment());
-}
-
-void PSYoungGen::reset_after_change() {
-  ShouldNotReachHere();
 }
 
 void PSYoungGen::reset_survivors_after_shrink() {

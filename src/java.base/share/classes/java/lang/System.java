@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1994, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1994, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -35,6 +35,8 @@ import java.io.InputStream;
 import java.io.PrintStream;
 import java.io.UnsupportedEncodingException;
 import java.lang.annotation.Annotation;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodType;
 import java.lang.module.ModuleDescriptor;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Executable;
@@ -49,13 +51,13 @@ import java.security.PrivilegedAction;
 import java.nio.channels.Channel;
 import java.nio.channels.spi.SelectorProvider;
 import java.nio.charset.Charset;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.PropertyPermission;
 import java.util.ResourceBundle;
+import java.util.Set;
 import java.util.function.Supplier;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
@@ -584,28 +586,10 @@ public final class System {
     public static native int identityHashCode(Object x);
 
     /**
-     * System properties. The following properties are guaranteed to be defined:
-     * <dl>
-     * <dt>java.version         <dd>Java version number
-     * <dt>java.version.date    <dd>Java version date
-     * <dt>java.vendor          <dd>Java vendor specific string
-     * <dt>java.vendor.url      <dd>Java vendor URL
-     * <dt>java.vendor.version  <dd>Java vendor version
-     * <dt>java.home            <dd>Java installation directory
-     * <dt>java.class.version   <dd>Java class version number
-     * <dt>java.class.path      <dd>Java classpath
-     * <dt>os.name              <dd>Operating System Name
-     * <dt>os.arch              <dd>Operating System Architecture
-     * <dt>os.version           <dd>Operating System Version
-     * <dt>file.separator       <dd>File separator ("/" on Unix)
-     * <dt>path.separator       <dd>Path separator (":" on Unix)
-     * <dt>line.separator       <dd>Line separator ("\n" on Unix)
-     * <dt>user.name            <dd>User account name
-     * <dt>user.home            <dd>User home directory
-     * <dt>user.dir             <dd>User's current working directory
-     * </dl>
+     * System properties.
+     *
+     * See {@linkplain #getProperties getProperties} for details.
      */
-
     private static Properties props;
 
     /**
@@ -1617,7 +1601,7 @@ public final class System {
          * the Java Runtime.  See the class specification of how the
          * {@link LoggerFinder LoggerFinder} implementation is located and
          * loaded.
-
+         *
          * @return the {@link LoggerFinder LoggerFinder} instance.
          * @throws SecurityException if a security manager is present and its
          *         {@code checkPermission} method doesn't allow the
@@ -1881,8 +1865,8 @@ public final class System {
      * for more details.
      *
      * Otherwise, the libname argument is loaded from a system library
-     * location and mapped to a native library image in an implementation-
-     * dependent manner.
+     * location and mapped to a native library image in an
+     * implementation-dependent manner.
      * <p>
      * The call {@code System.loadLibrary(name)} is effectively
      * equivalent to the call
@@ -2043,8 +2027,6 @@ public final class System {
         // register shared secrets
         setJavaLangAccess();
 
-        ClassLoader.initLibraryPaths();
-
         // Subsystems that are invoked during initialization can invoke
         // VM.isBooted() in order to avoid doing things that should
         // wait until the VM is fully initialized. The initialization level
@@ -2195,6 +2177,10 @@ public final class System {
             public Class<?> defineClass(ClassLoader loader, String name, byte[] b, ProtectionDomain pd, String source) {
                 return ClassLoader.defineClass1(loader, name, b, 0, b.length, pd, source);
             }
+            public Class<?> defineClass(ClassLoader loader, Class<?> lookup, String name, byte[] b, ProtectionDomain pd,
+                                        boolean initialize, int flags, Object classData) {
+                return ClassLoader.defineClass0(loader, lookup, name, b, 0, b.length, pd, initialize, flags, classData);
+            }
             public Class<?> findBootstrapClassOrNull(ClassLoader cl, String name) {
                 return cl.findBootstrapClassOrNull(name);
             }
@@ -2236,8 +2222,8 @@ public final class System {
             public void addOpensToAllUnnamed(Module m, String pn) {
                 m.implAddOpensToAllUnnamed(pn);
             }
-            public void addOpensToAllUnnamed(Module m, Iterator<String> packages) {
-                m.implAddOpensToAllUnnamed(packages);
+            public void addOpensToAllUnnamed(Module m, Set<String> concealedPackages, Set<String> exportedPackages) {
+                m.implAddOpensToAllUnnamed(concealedPackages, exportedPackages);
             }
             public void addUses(Module m, Class<?> service) {
                 m.implAddUses(service);
@@ -2278,9 +2264,16 @@ public final class System {
                 t.setCause(cause);
             }
 
-            public void loadLibrary(Class<?> caller, String library) {
-                assert library.indexOf(java.io.File.separatorChar) < 0;
-                ClassLoader.loadLibrary(caller, library, false);
+            public ProtectionDomain protectionDomain(Class<?> c) {
+                return c.protectionDomain();
+            }
+
+            public MethodHandle stringConcatHelper(String name, MethodType methodType) {
+                return StringConcatHelper.lookupStatic(name, methodType);
+            }
+
+            public Object classData(Class<?> c) {
+                return c.getClassData();
             }
         });
     }

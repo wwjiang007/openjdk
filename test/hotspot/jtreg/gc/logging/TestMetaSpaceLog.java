@@ -45,7 +45,6 @@ import sun.hotspot.WhiteBox;
  *          java.management
  * @requires vm.gc != "Epsilon"
  * @requires vm.gc != "Z"
- * @requires vm.gc != "Shenandoah"
  *
  * @compile TestMetaSpaceLog.java
  * @run driver ClassFileInstaller sun.hotspot.WhiteBox
@@ -85,8 +84,7 @@ public class TestMetaSpaceLog {
     String testSrc= "-Dtest.src=" + System.getProperty("test.src", ".");
 
     ProcessBuilder pb =
-      ProcessTools.createJavaProcessBuilder(
-          true,
+      ProcessTools.createTestJvm(
           "-Xlog:gc*",
           "-Xbootclasspath/a:.",
           "-XX:+UnlockDiagnosticVMOptions",

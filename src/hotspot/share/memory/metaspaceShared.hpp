@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2012, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -38,6 +38,7 @@
 
 class FileMapInfo;
 class CHeapBitMap;
+struct ArchiveHeapOopmapInfo;
 
 enum MapArchiveResult {
   MAP_ARCHIVE_SUCCESS,
@@ -62,6 +63,8 @@ private:
   char* _top;
   char* _end;
   bool _is_packed;
+  ReservedSpace* _rs;
+  VirtualSpace* _vs;
 
 public:
   DumpRegion(const char* name) : _name(name), _base(NULL), _top(NULL), _end(NULL), _is_packed(false) {}
@@ -84,19 +87,7 @@ public:
   void print(size_t total_bytes) const;
   void print_out_of_space_msg(const char* failing_region, size_t needed_bytes);
 
-  void init(const ReservedSpace* rs, char* base) {
-    if (base == NULL) {
-      base = rs->base();
-    }
-    assert(rs->contains(base), "must be");
-    _base = _top = base;
-    _end = rs->end();
-  }
-  void init(char* b, char* t, char* e) {
-    _base = b;
-    _top = t;
-    _end = e;
-  }
+  void init(ReservedSpace* rs, VirtualSpace* vs);
 
   void pack(DumpRegion* next = NULL);
 
@@ -177,6 +168,8 @@ class MetaspaceShared : AllStatic {
   // CDS support
   static ReservedSpace _shared_rs;
   static VirtualSpace _shared_vs;
+  static ReservedSpace _symbol_rs;
+  static VirtualSpace _symbol_vs;
   static int _max_alignment;
   static MetaspaceSharedStats _stats;
   static bool _has_error_classes;
@@ -193,10 +186,9 @@ class MetaspaceShared : AllStatic {
     mc = 0,  // miscellaneous code for method trampolines
     rw = 1,  // read-write shared space in the heap
     ro = 2,  // read-only shared space in the heap
-    md = 3,  // miscellaneous data for initializing tables, etc.
-    bm = 4,  // relocation bitmaps (freed after file mapping is finished)
-    num_core_region = 4,
-    num_non_heap_spaces = 5,
+    bm = 3,  // relocation bitmaps (freed after file mapping is finished)
+    num_core_region = 3,
+    num_non_heap_spaces = 4,
 
     // mapped java heap regions
     first_closed_archive_heap_region = bm + 1,
@@ -222,11 +214,15 @@ class MetaspaceShared : AllStatic {
     NOT_CDS(return NULL);
   }
 
+  static Symbol* symbol_rs_base() {
+    return (Symbol*)_symbol_rs.base();
+  }
+
   static void set_shared_rs(ReservedSpace rs) {
     CDS_ONLY(_shared_rs = rs);
   }
 
-  static void commit_shared_space_to(char* newtop) NOT_CDS_RETURN;
+  static void commit_to(ReservedSpace* rs, VirtualSpace* vs, char* newtop) NOT_CDS_RETURN;
   static void initialize_dumptime_shared_and_meta_spaces() NOT_CDS_RETURN;
   static void initialize_runtime_shared_and_meta_spaces() NOT_CDS_RETURN;
   static void post_initialize(TRAPS) NOT_CDS_RETURN;
@@ -271,8 +267,8 @@ class MetaspaceShared : AllStatic {
 
   static bool is_shared_dynamic(void* p) NOT_CDS_RETURN_(false);
 
-  static void allocate_cpp_vtable_clones();
-  static intptr_t* clone_cpp_vtables(intptr_t* p);
+  static char* allocate_cpp_vtable_clones();
+  static void clone_cpp_vtables(intptr_t* p);
   static void zero_cpp_vtable_clones_for_writing();
   static void patch_cpp_vtable_pointers();
   static void serialize_cloned_cpp_vtptrs(SerializeClosure* sc);
@@ -297,12 +293,12 @@ class MetaspaceShared : AllStatic {
   }
 
   static bool try_link_class(InstanceKlass* ik, TRAPS);
-  static void link_and_cleanup_shared_classes(TRAPS);
+  static void link_and_cleanup_shared_classes(TRAPS) NOT_CDS_RETURN;
 
 #if INCLUDE_CDS
   static ReservedSpace reserve_shared_space(size_t size, char* requested_address = NULL);
   static size_t reserved_space_alignment();
-  static void init_shared_dump_space(DumpRegion* first_space, address first_space_bottom = NULL);
+  static void init_shared_dump_space(DumpRegion* first_space);
   static DumpRegion* misc_code_dump_space();
   static DumpRegion* read_write_dump_space();
   static DumpRegion* read_only_dump_space();
@@ -312,7 +308,10 @@ class MetaspaceShared : AllStatic {
   static void rewrite_nofast_bytecodes_and_calculate_fingerprints(Thread* thread, InstanceKlass* ik);
 #endif
 
-  // Allocate a block of memory from the "mc", "ro", or "rw" regions.
+  // Allocate a block of memory from the temporary "symbol" region.
+  static char* symbol_space_alloc(size_t num_bytes);
+
+  // Allocate a block of memory from the "mc" or "ro" regions.
   static char* misc_code_space_alloc(size_t num_bytes);
   static char* read_only_space_alloc(size_t num_bytes);
 
@@ -346,6 +345,7 @@ class MetaspaceShared : AllStatic {
 
   static Klass* get_relocated_klass(Klass *k, bool is_final=false);
 
+  static void allocate_cloned_cpp_vtptrs();
   static intptr_t* fix_cpp_vtable_for_dynamic_archive(MetaspaceObj::Type msotype, address obj);
   static void initialize_ptr_marker(CHeapBitMap* ptrmap);
 
@@ -357,7 +357,15 @@ class MetaspaceShared : AllStatic {
     //const bool is_windows = true; // enable this to allow testing the windows mmap semantics on Linux, etc.
     return is_windows;
   }
+
+  static void write_core_archive_regions(FileMapInfo* mapinfo,
+                                         GrowableArray<ArchiveHeapOopmapInfo>* closed_oopmaps,
+                                         GrowableArray<ArchiveHeapOopmapInfo>* open_oopmaps);
 private:
+#if INCLUDE_CDS
+  static void write_region(FileMapInfo* mapinfo, int region_idx, DumpRegion* dump_region,
+                           bool read_only,  bool allow_exec);
+#endif
   static void read_extra_data(const char* filename, TRAPS) NOT_CDS_RETURN;
   static FileMapInfo* open_static_archive();
   static FileMapInfo* open_dynamic_archive();
