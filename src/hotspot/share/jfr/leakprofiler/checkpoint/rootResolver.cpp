@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2014, 2020, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,6 +26,8 @@
 #include "aot/aotLoader.hpp"
 #include "classfile/classLoaderDataGraph.hpp"
 #include "classfile/stringTable.hpp"
+#include "gc/shared/oopStorage.inline.hpp"
+#include "gc/shared/oopStorageSet.hpp"
 #include "gc/shared/strongRootsScope.hpp"
 #include "jfr/leakprofiler/utilities/unifiedOopRef.inline.hpp"
 #include "jfr/leakprofiler/checkpoint/rootResolver.hpp"
@@ -96,9 +98,8 @@ class ReferenceToRootClosure : public StackObj {
   bool do_cldg_roots();
   bool do_object_synchronizer_roots();
   bool do_universe_roots();
-  bool do_jni_handle_roots();
+  bool do_oop_storage_roots();
   bool do_jvmti_roots();
-  bool do_system_dictionary_roots();
   bool do_management_roots();
   bool do_string_table_roots();
   bool do_aot_loader_roots();
@@ -146,24 +147,28 @@ bool ReferenceToRootClosure::do_universe_roots() {
   return rlc.complete();
 }
 
-bool ReferenceToRootClosure::do_jni_handle_roots() {
-  assert(!complete(), "invariant");
-  ReferenceLocateClosure rlc(_callback, OldObjectRoot::_global_jni_handles, OldObjectRoot::_global_jni_handle, NULL);
-  JNIHandles::oops_do(&rlc);
-  return rlc.complete();
+bool ReferenceToRootClosure::do_oop_storage_roots() {
+  int i = 0;
+  for (OopStorageSet::Iterator it = OopStorageSet::strong_iterator(); !it.is_end(); ++it, ++i) {
+    assert(!complete(), "invariant");
+    OopStorage* oop_storage = *it;
+    OldObjectRoot::Type type = oop_storage == OopStorageSet::jni_global() ?
+                               OldObjectRoot::_global_jni_handle :
+                               OldObjectRoot::_global_oop_handle;
+    OldObjectRoot::System system = OldObjectRoot::System(OldObjectRoot::_strong_oop_storage_set_first + i);
+    ReferenceLocateClosure rlc(_callback, system, type, NULL);
+    oop_storage->oops_do(&rlc);
+    if (rlc.complete()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool ReferenceToRootClosure::do_jvmti_roots() {
   assert(!complete(), "invariant");
   ReferenceLocateClosure rlc(_callback, OldObjectRoot::_jvmti, OldObjectRoot::_global_jni_handle, NULL);
   JvmtiExport::oops_do(&rlc);
-  return rlc.complete();
-}
-
-bool ReferenceToRootClosure::do_system_dictionary_roots() {
-  assert(!complete(), "invariant");
-  ReferenceLocateClosure rlc(_callback, OldObjectRoot::_system_dictionary, OldObjectRoot::_type_undetermined, NULL);
-  SystemDictionary::oops_do(&rlc);
   return rlc.complete();
 }
 
@@ -201,17 +206,12 @@ bool ReferenceToRootClosure::do_roots() {
     return true;
   }
 
-  if (do_jni_handle_roots()) {
+  if (do_oop_storage_roots()) {
    _complete = true;
     return true;
   }
 
   if (do_jvmti_roots()) {
-   _complete = true;
-    return true;
-  }
-
-  if (do_system_dictionary_roots()) {
    _complete = true;
     return true;
   }

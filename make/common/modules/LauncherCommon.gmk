@@ -40,8 +40,6 @@ ifeq ($(TOOLCHAIN_TYPE), gcc)
   LDFLAGS_JDKEXE += -Wl,--exclude-libs,ALL
 else ifeq ($(TOOLCHAIN_TYPE), clang)
   LAUNCHER_CFLAGS += -fvisibility=hidden
-else ifeq ($(TOOLCHAIN_TYPE), solstudio)
-  LAUNCHER_CFLAGS += -xldscope=hidden
 endif
 
 LAUNCHER_SRC := $(TOPDIR)/src/java.base/share/native/launcher
@@ -50,7 +48,6 @@ LAUNCHER_CFLAGS += -I$(TOPDIR)/src/java.base/share/native/launcher \
     -I$(TOPDIR)/src/java.base/$(OPENJDK_TARGET_OS_TYPE)/native/libjli \
     -I$(TOPDIR)/src/java.base/$(OPENJDK_TARGET_OS)/native/libjli \
     #
-GLOBAL_VERSION_INFO_RESOURCE := $(TOPDIR)/src/java.base/windows/native/common/version.rc
 MACOSX_PLIST_DIR := $(TOPDIR)/src/java.base/macosx/native/launcher
 JAVA_MANIFEST := $(TOPDIR)/src/java.base/windows/native/launcher/java.manifest
 
@@ -73,7 +70,7 @@ JAVA_MANIFEST := $(TOPDIR)/src/java.base/windows/native/launcher/java.manifest
 #     compile time defines exceeding Visual Studio 2013 limitations.
 # CFLAGS   Additional CFLAGS
 # CFLAGS_windows   Additional CFLAGS_windows
-# EXTRA_RC_FLAGS   Additional EXTRA_RC_FLAGS
+# EXTRA_RCFLAGS   Additional EXTRA_RCFLAGS
 # MACOSX_PRIVILEGED   On macosx, allow to access other processes
 # OPTIMIZATION   Override default optimization level (LOW)
 # OUTPUT_DIR   Override default output directory
@@ -143,7 +140,6 @@ define SetupBuildLauncherBody
           -DLAUNCHER_NAME='"$$(LAUNCHER_NAME)"' \
           -DPROGNAME='"$1"' \
           $$($1_CFLAGS), \
-      CFLAGS_solaris := -KPIC, \
       CFLAGS_windows := $$($1_CFLAGS_windows), \
       DISABLED_WARNINGS_gcc := unused-function, \
       LDFLAGS := $$(LDFLAGS_JDKEXE) \
@@ -153,20 +149,17 @@ define SetupBuildLauncherBody
           -L$(call FindLibDirForModule, java.base), \
       LDFLAGS_macosx := $$(call SET_EXECUTABLE_ORIGIN,/../lib) \
           -L$(call FindLibDirForModule, java.base), \
-      LDFLAGS_solaris := $$(call SET_EXECUTABLE_ORIGIN,/../lib) \
-          -L$(call FindLibDirForModule, java.base), \
       LDFLAGS_aix := -L$(SUPPORT_OUTPUTDIR)/native/java.base, \
       LIBS := $(JDKEXE_LIBS) $$($1_LIBS), \
       LIBS_linux := -ljli -lpthread $(LIBDL), \
       LIBS_macosx := -ljli -framework Cocoa -framework Security \
           -framework ApplicationServices, \
-      LIBS_solaris := -ljli -lthread $(LIBDL), \
       LIBS_aix := -ljli_static, \
       LIBS_windows := $$($1_WINDOWS_JLI_LIB) \
           $(SUPPORT_OUTPUTDIR)/native/java.base/libjava/java.lib, \
       OUTPUT_DIR := $$($1_OUTPUT_DIR), \
       VERSIONINFO_RESOURCE := $$($1_VERSION_INFO_RESOURCE), \
-      EXTRA_RC_FLAGS := $$($1_EXTRA_RC_FLAGS), \
+      EXTRA_RCFLAGS := $$($1_EXTRA_RCFLAGS), \
       MANIFEST := $(JAVA_MANIFEST), \
       MANIFEST_VERSION := $(VERSION_NUMBER_FOUR_POSITIONS), \
   ))
@@ -205,9 +198,9 @@ ifeq ($(call isTargetOsType, unix), true)
       # PANDOC_TROFF_MANPAGE_FILTER, a wrapper around
       # PANDOC_TROFF_MANPAGE_FILTER_JAVASCRIPT. This is created by buildtools-jdk.
 
-      # We should also depend on the source javascript filter
-      PANDOC_TROFF_MANPAGE_FILTER_JAVASCRIPT := \
-          $(TOPDIR)/make/scripts/pandoc-troff-manpage-filter.js
+      # We should also depend on the source code for the filter
+      PANDOC_TROFF_MANPAGE_FILTER_SOURCE := $(call FindFiles, \
+          $(TOPDIR)/make/jdk/src/classes/build/tools/pandocfilter)
 
       # The norm in man pages is to display code literals as bold, but pandoc
       # "correctly" converts these constructs (encoded in markdown using `...`
@@ -237,7 +230,7 @@ ifeq ($(call isTargetOsType, unix), true)
 		@@VERSION_SHORT@@ => $(VERSION_SHORT) ; \
 		@@VERSION_SPECIFICATION@@ => $(VERSION_SPECIFICATION), \
           EXTRA_DEPS := $(PANDOC_TROFF_MANPAGE_FILTER) \
-              $(PANDOC_TROFF_MANPAGE_FILTER_JAVASCRIPT), \
+              $(PANDOC_TROFF_MANPAGE_FILTER_SOURCE), \
       ))
 
       TARGETS += $(BUILD_MAN_PAGES)

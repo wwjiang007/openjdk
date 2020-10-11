@@ -49,8 +49,7 @@
 #include "utilities/globalDefinitions.hpp"
 
 inline ShenandoahHeap* ShenandoahHeap::heap() {
-  assert(_heap != NULL, "Heap is not initialized yet");
-  return _heap;
+  return named_heap<ShenandoahHeap>(CollectedHeap::Shenandoah);
 }
 
 inline ShenandoahHeapRegion* ShenandoahRegionIterator::next() {
@@ -83,6 +82,14 @@ inline ShenandoahHeapRegion* const ShenandoahHeap::heap_region_containing(const 
   ShenandoahHeapRegion* const result = get_region(index);
   assert(addr >= result->bottom() && addr < result->end(), "Heap region contains the address: " PTR_FORMAT, p2i(addr));
   return result;
+}
+
+inline void ShenandoahHeap::enter_evacuation(Thread* t) {
+  _oom_evac_handler.enter_evacuation(t);
+}
+
+inline void ShenandoahHeap::leave_evacuation(Thread* t) {
+  _oom_evac_handler.leave_evacuation(t);
 }
 
 template <class T>

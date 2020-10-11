@@ -31,7 +31,9 @@
  *          /test/hotspot/jtreg/runtime/cds/appcds/dynamicArchive
  * @modules java.base/jdk.internal.misc
  *          jdk.httpserver
- * @run driver DynamicLoaderConstraintsTest
+ * @build sun.hotspot.WhiteBox
+ * @run driver ClassFileInstaller sun.hotspot.WhiteBox
+ * @run main/othervm -XX:+UnlockDiagnosticVMOptions -XX:+WhiteBoxAPI -Xbootclasspath/a:. DynamicLoaderConstraintsTest
  */
 
 import com.sun.net.httpserver.HttpExchange;

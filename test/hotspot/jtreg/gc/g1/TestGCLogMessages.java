@@ -28,7 +28,6 @@ package gc.g1;
  * @bug 8035406 8027295 8035398 8019342 8027959 8048179 8027962 8069330 8076463 8150630 8160055 8177059 8166191
  * @summary Ensure the output for a minor GC with G1
  * includes the expected necessary messages.
- * @key gc
  * @requires vm.gc.G1
  * @library /test/lib
  * @modules java.base/jdk.internal.misc
@@ -123,13 +122,13 @@ public class TestGCLogMessages {
         // Ext Root Scan
         new LogMessageWithLevel("Thread Roots", Level.TRACE),
         new LogMessageWithLevel("Universe Roots", Level.TRACE),
-        new LogMessageWithLevel("JNI Handles Roots", Level.TRACE),
         new LogMessageWithLevel("ObjectSynchronizer Roots", Level.TRACE),
         new LogMessageWithLevel("Management Roots", Level.TRACE),
-        new LogMessageWithLevel("SystemDictionary Roots", Level.TRACE),
         new LogMessageWithLevel("CLDG Roots", Level.TRACE),
         new LogMessageWithLevel("JVMTI Roots", Level.TRACE),
         new LogMessageWithLevel("CM RefProcessor Roots", Level.TRACE),
+        new LogMessageWithLevel("JNI Global Roots", Level.TRACE),
+        new LogMessageWithLevel("VM Global Roots", Level.TRACE),
         // Redirty Cards
         new LogMessageWithLevel("Redirty Cards", Level.DEBUG),
         new LogMessageWithLevel("Parallel Redirty", Level.TRACE),
@@ -165,10 +164,10 @@ public class TestGCLogMessages {
         new LogMessageWithLevel("Reference Processing", Level.DEBUG),
         // VM internal reference processing
         new LogMessageWithLevel("Weak Processing", Level.DEBUG),
-        new LogMessageWithLevel("JNI weak", Level.DEBUG),
-        new LogMessageWithLevel("StringTable weak", Level.DEBUG),
-        new LogMessageWithLevel("ResolvedMethodTable weak", Level.DEBUG),
-        new LogMessageWithLevel("VM weak", Level.DEBUG),
+        new LogMessageWithLevel("JNI Weak", Level.DEBUG),
+        new LogMessageWithLevel("StringTable Weak", Level.DEBUG),
+        new LogMessageWithLevel("ResolvedMethodTable Weak", Level.DEBUG),
+        new LogMessageWithLevel("VM Weak", Level.DEBUG),
 
         new LogMessageWithLevelC2OrJVMCIOnly("DerivedPointerTable Update", Level.DEBUG),
         new LogMessageWithLevel("Start New Collection Set", Level.DEBUG),

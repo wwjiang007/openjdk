@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2011, 2016, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2011, 2020, Oracle and/or its affiliates. All rights reserved.
 # DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 #
 # This code is free software; you can redistribute it and/or modify it
@@ -52,7 +52,15 @@ AC_DEFUN([UTIL_REWRITE_AS_WINDOWS_MIXED_PATH],
     windows_path=`cmd //c echo $unix_path`
     $1="$windows_path"
   elif test "x$OPENJDK_BUILD_OS_ENV" = "xwindows.wsl"; then
-    windows_path=`$WSLPATH -m "$unix_path"`
+    windows_path=`$WSLPATH -m "$unix_path" 2>/dev/null`
+    if test $? -ne 0; then
+      dir=`dirname "$unix_path"`
+      base=`basename "$unix_path"`
+      windows_path=`$WSLPATH -m "$dir"`/"$base"
+      if test $? -ne 0; then
+        AC_MSG_ERROR([Cannot convert "$unix_path" to Windows path])
+      fi
+    fi
     $1="$windows_path"
   fi
 ])
@@ -127,10 +135,15 @@ AC_DEFUN([UTIL_MAKE_WINDOWS_SPACE_SAFE_WSL],
     UTIL_REWRITE_AS_WINDOWS_MIXED_PATH([TOPDIR_windows])
     # First convert to Windows path to make input valid for cmd
     UTIL_REWRITE_AS_WINDOWS_MIXED_PATH([input_path])
+    # Reset PATH since it can contain a mix of WSL/linux paths and Windows paths from VS,
+    # which, in combination with WSLENV, will make the WSL layer complain
+    old_path="$PATH"
+    PATH=
     new_path=`$CMD /c $TOPDIR_windows/make/scripts/windowsShortName.bat "$input_path" \
         | $SED -e 's|\r||g' \
         | $TR \\\\\\\\ / | $TR 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' 'abcdefghijklmnopqrstuvwxyz'`
     # Rewrite back to unix style
+    PATH="$old_path"
     UTIL_REWRITE_AS_UNIX_PATH([new_path])
   fi
 ])

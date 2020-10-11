@@ -170,6 +170,7 @@ public class Resources extends java.util.ListResourceBundle {
         {"key.bit.weak", "%d-bit key (weak)"},
         {"key.bit.disabled", "%d-bit key (disabled)"},
         {"unknown.size", "unknown size"},
+        {"posix.attributes.detected", "POSIX file permission attributes detected. These attributes are ignored when signing and are not protected by the signature."},
 
         {"jarsigner.", "jarsigner: "},
         {"signature.filename.must.consist.of.the.following.characters.A.Z.0.9.or.",
@@ -282,6 +283,8 @@ public class Resources extends java.util.ListResourceBundle {
                 "The %1$s algorithm specified for the %2$s option is considered a security risk. This algorithm will be disabled in a future update."},
         {"The.1.algorithm.specified.for.the.2.option.is.considered.a.security.risk.and.is.disabled.",
                 "The %1$s algorithm specified for the %2$s option is considered a security risk and is disabled."},
+        {"The.timestamp.digest.algorithm.1.is.considered.a.security.risk..This.algorithm.will.be.disabled.in.a.future.update.",
+                "The %1$s timestamp digest algorithm is considered a security risk. This algorithm will be disabled in a future update."},
         {"The.digest.algorithm.1.is.considered.a.security.risk..This.algorithm.will.be.disabled.in.a.future.update.",
                 "The %1$s digest algorithm is considered a security risk. This algorithm will be disabled in a future update."},
         {"The.signature.algorithm.1.is.considered.a.security.risk..This.algorithm.will.be.disabled.in.a.future.update.",

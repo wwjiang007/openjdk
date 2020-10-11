@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2019, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2020, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2014, 2108, Red Hat Inc. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
@@ -76,6 +76,7 @@ class NativeInstruction {
   bool is_movz();
   bool is_movk();
   bool is_sigill_zombie_not_entrant();
+  bool is_stop();
 
  protected:
   address addr_at(int offset) const    { return address(this) + offset; }
@@ -100,9 +101,6 @@ class NativeInstruction {
   void wrote(int offset);
 
  public:
-
-  // unit test stuff
-  static void test() {}                 // override for testing
 
   inline friend NativeInstruction* nativeInstruction_at(address address);
 
@@ -320,9 +318,6 @@ class NativeMovConstReg: public NativeInstruction {
   void  verify();
   void  print();
 
-  // unit test stuff
-  static void test() {}
-
   // Creation
   inline friend NativeMovConstReg* nativeMovConstReg_at(address address);
   inline friend NativeMovConstReg* nativeMovConstReg_before(address address);
@@ -396,9 +391,6 @@ class NativeMovRegMem: public NativeInstruction {
   void verify();
   void print ();
 
-  // unit test stuff
-  static void test() {}
-
  private:
   inline friend NativeMovRegMem* nativeMovRegMem_at (address address);
 };
@@ -431,8 +423,6 @@ class NativeLoadAddress: public NativeInstruction {
   void verify();
   void print ();
 
-  // unit test stuff
-  static void test() {}
 };
 
 //   adrp    x16, #page
@@ -486,9 +476,6 @@ class NativeJump: public NativeInstruction {
   inline friend NativeJump* nativeJump_at(address address);
 
   void verify();
-
-  // Unit testing stuff
-  static void test() {}
 
   // Insertion of native jump instruction
   static void insert(address code_pos, address entry);
